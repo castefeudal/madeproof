@@ -1,0 +1,8 @@
+.git
+node_modules
+dist
+.madeproof-data
+.env
+.env.*
+artifacts/browser/*.png
+npm-debug.log*
