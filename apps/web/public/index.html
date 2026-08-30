@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en" data-theme="system">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="Independent verification for AI work.">
+  <title>MADEPROOF — AI can say done. MADEPROOF proves it.</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <a class="brand" href="/" data-nav="/" aria-label="MADEPROOF home">
+      <img src="/mark.svg" alt="" width="30" height="30">
+      <span>MADEPROOF <small>by MARKOVMADE</small></span>
+    </a>
+    <nav aria-label="Primary">
+      <button class="text-button" id="language-toggle" type="button" aria-label="Switch language">RU</button>
+      <button class="text-button" id="theme-toggle" type="button" aria-label="Change color theme">System</button>
+      <button class="text-button hidden" id="logout-button" type="button">Log out</button>
+    </nav>
+  </header>
+
+  <main id="main" tabindex="-1">
+    <section id="landing" class="landing">
+      <div class="hero">
+        <p class="eyebrow" data-i18n="trustLayer">TRUST LAYER FOR AI DELEGATION</p>
+        <h1><span data-i18n="heroOne">AI can say “done”.</span><br><strong data-i18n="heroTwo">MADEPROOF proves it.</strong></h1>
+        <p class="hero-copy" data-i18n="heroCopy">Define what done means, collect evidence, verify the result, and review only exceptions.</p>
+        <div class="actions">
+          <button class="primary" id="open-login" type="button" data-i18n="verifyFirst">Verify your first task</button>
+          <a class="secondary" href="#how" data-i18n="seeHow">See how it works</a>
+        </div>
+      </div>
+      <article class="killer-card" aria-label="Verification example">
+        <div class="claim"><span>AGENT</span><strong>Done. Everything works.</strong></div>
+        <div class="proof">
+          <div class="status status-review"><span aria-hidden="true">!</span> REVIEW REQUIRED</div>
+          <p><strong>6/7 blocking criteria passed.</strong></p>
+          <p>Pointer interaction works. Keyboard activation still fails and <code>aria-pressed</code> remains false.</p>
+          <div class="evidence-row"><span>Trace</span><span>Screenshot</span><span>ARIA snapshot</span></div>
+        </div>
+      </article>
+      <div id="how" class="three-steps">
+        <article><span>01</span><h2>Contract</h2><p>Turn intent into observable acceptance criteria before execution.</p></article>
+        <article><span>02</span><h2>Evidence</h2><p>Prefer execution, browser state, logs and artifacts over agent claims.</p></article>
+        <article><span>03</span><h2>Verdict</h2><p>VERIFIED is possible only when every blocking gate actually passes.</p></article>
+      </div>
+    </section>
+
+    <section id="login-panel" class="auth-panel hidden" aria-labelledby="login-title">
+      <form id="login-form" class="panel narrow">
+        <p class="eyebrow">LOCAL EVALUATION</p>
+        <h1 id="login-title">Sign in</h1>
+        <label>Email<input id="email" name="email" type="email" autocomplete="username" value="owner@localhost" required></label>
+        <label>Password<input id="password" name="password" type="password" autocomplete="current-password" value="madeproof-local" required></label>
+        <button class="primary" type="submit">Sign in</button>
+        <p class="muted">Development credentials are enabled only in non-production mode.</p>
+      </form>
+    </section>
+
+    <section id="app-shell" class="app-shell hidden">
+      <aside class="sidebar" aria-label="Workspace">
+        <a href="/app" data-nav="/app" class="nav-item active">Attention</a>
+        <a href="/projects" data-nav="/projects" class="nav-item">Projects</a>
+        <a href="/tasks" data-nav="/tasks" class="nav-item">Tasks</a>
+        <a href="/settings/api-keys" data-nav="/settings/api-keys" class="nav-item">API keys</a>
+        <a href="/settings/integrations" data-nav="/settings/integrations" class="nav-item">Integrations</a>
+      </aside>
+      <div class="workspace">
+        <div id="route-view"></div>
+      </div>
+    </section>
+  </main>
+  <div id="toast" role="status" aria-live="polite" class="toast hidden"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

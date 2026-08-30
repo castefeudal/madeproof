@@ -1,0 +1,36 @@
+{
+  "name": "madeproof",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Evidence-first verification layer for delegated AI work.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.16.0"
+  },
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "examples/*"
+  ],
+  "scripts": {
+    "clean": "rm -rf dist .madeproof-data",
+    "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "dev": "npm run build && NODE_ENV=development node dist/apps/api/src/main.js",
+    "start": "node dist/apps/api/src/main.js",
+    "worker": "node dist/apps/runner/src/main.js",
+    "mcp": "node dist/apps/mcp/src/main.js",
+    "cli": "node dist/apps/cli/src/main.js",
+    "lint": "node scripts/lint.mjs",
+    "format:check": "node scripts/format-check.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test:unit": "npm run build && node --test dist/tests/unit/*.test.js",
+    "test:integration": "npm run build && node --test dist/tests/integration/*.test.js",
+    "test:security": "npm run build && node --test dist/tests/security/*.test.js",
+    "test:e2e": "npm run build && node dist/tests/e2e/core-flow.js",
+    "test:browser": "npm run build && node dist/tests/browser/ui-flow.js",
+    "test": "npm run test:unit && npm run test:integration && npm run test:security && npm run test:e2e",
+    "verify": "npm run lint && npm run format:check && npm run typecheck && npm run test && npm run test:browser",
+    "db:migrate": "npm run build && node dist/apps/api/src/migrate.js",
+    "db:seed": "npm run build && node dist/apps/api/src/seed.js"
+  }
+}

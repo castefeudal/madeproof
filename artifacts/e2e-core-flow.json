@@ -1,0 +1,80 @@
+{
+  "generatedAt": "2026-08-30T21:17:48.281Z",
+  "taskId": "tsk_8da3d393c8764cb1b1a6e7cfeb3b3615",
+  "contractId": "contract_d940623990f7408ebdfa1a18e7c10ab1",
+  "failedRun": {
+    "id": "run_0f4211f02f95405da4714bd83c6fb0f8",
+    "verdict": "FAILED",
+    "passed": 5,
+    "total": 7,
+    "receiptDigest": "0354a68444fbf80dafe72fcf2da3aa08162c74125dda46c433b1a8897d2472b3"
+  },
+  "retryRun": {
+    "id": "run_3d339518c1404cd395097266034ee3e0",
+    "verdict": "VERIFIED",
+    "passed": 7,
+    "total": 7,
+    "receiptDigest": "579b4fc0d5e266a3ccd02133cb087606edbfe0258c89f738f6407286f1c22f14"
+  },
+  "evidence": [
+    {
+      "criterionId": "crit_6bb6aac28ebb44648614513df0558f5b",
+      "status": "PASSED",
+      "summary": "Scenario B activated through pointer.",
+      "evidenceIds": [
+        "evd_143b7c50634d492e8b74cb072c299e13",
+        "evd_463a523e461a4b53ab1c7fe796da20eb"
+      ]
+    },
+    {
+      "criterionId": "crit_873c04ef9faf47a1b3fb5839657ff2ae",
+      "status": "PASSED",
+      "summary": "Scenario B activated through keyboard.",
+      "evidenceIds": [
+        "evd_5a4f9eef3e524989ac2bfd23e1d2848d",
+        "evd_c436344a38ad4ce4b2e5e6a6041d5190"
+      ]
+    },
+    {
+      "criterionId": "crit_e38bb0a8807145c5aee600784bde5d19",
+      "status": "PASSED",
+      "summary": "ARIA state reflects the active scenario.",
+      "evidenceIds": [
+        "evd_df986b0d298c4335bd8481346023256b"
+      ]
+    },
+    {
+      "criterionId": "crit_5d1f4c0ba251447c82d6bf1a7551feac",
+      "status": "PASSED",
+      "summary": "test_suite completed with exit code 0.",
+      "evidenceIds": [
+        "evd_1317cb17df074b259deb51713d2bd879"
+      ]
+    },
+    {
+      "criterionId": "crit_88c2a617de1f4c7f8a134bc23ab5bde9",
+      "status": "PASSED",
+      "summary": "build completed with exit code 0.",
+      "evidenceIds": [
+        "evd_356f87b6c53a4eb4a6076dd3dcb70a61"
+      ]
+    },
+    {
+      "criterionId": "crit_9e01d2ec47624c4b81c1fce0ba0b1407",
+      "status": "PASSED",
+      "summary": "No horizontal overflow was observed at representative mobile widths.",
+      "evidenceIds": [
+        "evd_e8856b4d88e04bde8203bc67efb732b4",
+        "evd_c4fe2301f8cc4825985baac1b8a51775"
+      ]
+    },
+    {
+      "criterionId": "crit_dc1119b325204207a7e4f720a68ad073",
+      "status": "PASSED",
+      "summary": "No serious defects were found by the automated accessibility smoke.",
+      "evidenceIds": [
+        "evd_1c9691901c794d2792935766f2eb0874"
+      ]
+    }
+  ]
+}

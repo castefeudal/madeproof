@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>MADEPROOF Demo Target</title>
+  <link rel="stylesheet" href="/demo-target/styles.css">
+</head>
+<body data-active="A">
+  <main class="demo-shell">
+    <p class="eyebrow">Executable verification target</p>
+    <h1>Scenario selector</h1>
+    <p>Scenario B is intentionally broken for keyboard activation until the fixed fixture is selected.</p>
+    <div class="selector" role="group" aria-label="Scenario">
+      <button id="scenario-a" type="button" aria-pressed="true">Scenario A</button>
+      <button id="scenario-b" type="button" aria-pressed="false">Scenario B</button>
+    </div>
+    <output id="active-state" aria-live="polite">Active: Scenario A</output>
+  </main>
+  <script type="module" src="/demo-target/app.js"></script>
+</body>
+</html>
