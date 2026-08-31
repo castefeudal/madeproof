@@ -1,0 +1,12 @@
+{
+  "verdict": "VERIFIED",
+  "digest": "801e08e3cc74ca024050da409610ac4062eae02586d5b6440fde2be25972b229",
+  "failuresObserved": [
+    "Scenario B did not activate through keyboard.",
+    "ARIA state does not reflect the expected active scenario."
+  ],
+  "desktop": "artifacts/browser/desktop-verified.png",
+  "mobile": "artifacts/browser/mobile-verified.png",
+  "consoleErrors": [],
+  "networkErrors": []
+}
