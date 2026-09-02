@@ -7,7 +7,7 @@ export const TASK_STATUSES = [
   'VERIFIED',
   'REVIEW_REQUIRED',
   'FAILED',
-  'CANCELLED'
+  'CANCELLED',
 ] as const;
 export type TaskStatus = (typeof TASK_STATUSES)[number];
 
@@ -20,7 +20,7 @@ export const RUN_STATUSES = [
   'COMPLETED',
   'FAILED',
   'CANCELLED',
-  'TIMED_OUT'
+  'TIMED_OUT',
 ] as const;
 export type RunStatus = (typeof RUN_STATUSES)[number];
 
@@ -32,7 +32,7 @@ export const CHECK_STATUSES = [
   'INCONCLUSIVE',
   'ERROR',
   'SKIPPED',
-  'CANCELLED'
+  'CANCELLED',
 ] as const;
 export type CheckStatus = (typeof CHECK_STATUSES)[number];
 
@@ -127,7 +127,8 @@ export interface EvidenceItem {
   mimeType: string;
   sizeBytes: number;
   storageLocation: string;
-  provenance: 'SELF_REPORTED' | 'IMPORTED' | 'EXTERNAL_SIGNED' | 'OBSERVED' | 'EXECUTED_BY_MADEPROOF';
+  provenance:
+    'SELF_REPORTED' | 'IMPORTED' | 'EXTERNAL_SIGNED' | 'OBSERVED' | 'EXECUTED_BY_MADEPROOF';
   trustTier: number;
   sanitizationState: 'PENDING' | 'SAFE' | 'REJECTED';
   value?: unknown;

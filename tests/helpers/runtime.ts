@@ -29,7 +29,7 @@ export async function startTestApplication(label = 'test') {
     adminPassword: 'correct horse battery staple',
     sessionSecret: 'test-session-secret-is-at-least-thirty-two-characters',
     encryptionKey: 'test-encryption-key-is-at-least-thirty-two-characters',
-    databaseKind: 'sqlite'
+    databaseKind: 'sqlite',
   });
   const started = await app.start();
   return {
@@ -39,23 +39,37 @@ export async function startTestApplication(label = 'test') {
     async close() {
       await app.close();
       fs.rmSync(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
-    }
+    },
   };
 }
 
-export async function login(baseUrl: string): Promise<{ cookie: string; csrf: string; user: any; workspace: any }> {
+export async function login(
+  baseUrl: string,
+): Promise<{ cookie: string; csrf: string; user: any; workspace: any }> {
   const response = await fetch(`${baseUrl}/api/v1/auth/login`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: 'owner@example.test', password: 'correct horse battery staple' })
+    body: JSON.stringify({ email: 'owner@example.test', password: 'correct horse battery staple' }),
   });
   const body = await response.json();
   if (!response.ok) throw new Error(`Login failed: ${JSON.stringify(body)}`);
   const setCookie = response.headers.get('set-cookie') ?? '';
-  return { cookie: setCookie.split(';')[0]!, csrf: body.csrfToken, user: body.user, workspace: body.workspace };
+  return {
+    cookie: setCookie.split(';')[0]!,
+    csrf: body.csrfToken,
+    user: body.user,
+    workspace: body.workspace,
+  };
 }
 
-export async function api<T = any>(baseUrl: string, auth: { cookie: string; csrf: string }, method: string, pathname: string, body?: unknown, headers: Record<string, string> = {}): Promise<{ status: number; body: T; headers: any }> {
+export async function api<T = any>(
+  baseUrl: string,
+  auth: { cookie: string; csrf: string },
+  method: string,
+  pathname: string,
+  body?: unknown,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: T; headers: any }> {
   const response = await fetch(`${baseUrl}/api/v1${pathname}`, {
     method,
     headers: {
@@ -63,19 +77,31 @@ export async function api<T = any>(baseUrl: string, auth: { cookie: string; csrf
       Cookie: auth.cookie,
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(['GET', 'HEAD'].includes(method) ? {} : { 'X-CSRF-Token': auth.csrf }),
-      ...headers
+      ...headers,
     },
-    body: body === undefined ? undefined : JSON.stringify(body)
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
   const payload = await response.json().catch(() => ({}));
   return { status: response.status, body: payload as T, headers: response.headers };
 }
 
-export async function createFullScopeApiKey(baseUrl: string, auth: { cookie: string; csrf: string }): Promise<string> {
+export async function createFullScopeApiKey(
+  baseUrl: string,
+  auth: { cookie: string; csrf: string },
+): Promise<string> {
   const response = await api<any>(baseUrl, auth, 'POST', '/api-keys', {
     name: 'integration key',
-    scopes: ['projects:read', 'projects:write', 'tasks:read', 'tasks:write', 'evidence:write', 'verification:run', 'receipts:read']
+    scopes: [
+      'projects:read',
+      'projects:write',
+      'tasks:read',
+      'tasks:write',
+      'evidence:write',
+      'verification:run',
+      'receipts:read',
+    ],
   });
-  if (response.status !== 201) throw new Error(`API key creation failed: ${JSON.stringify(response.body)}`);
+  if (response.status !== 201)
+    throw new Error(`API key creation failed: ${JSON.stringify(response.body)}`);
   return response.body.secret;
 }

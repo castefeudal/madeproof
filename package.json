@@ -32,5 +32,13 @@
     "verify": "npm run lint && npm run format:check && npm run typecheck && npm run test && npm run test:browser",
     "db:migrate": "npm run build && node dist/apps/api/src/migrate.js",
     "db:seed": "npm run build && node dist/apps/api/src/seed.js"
+  },
+  "devDependencies": {
+    "@types/node": "^26.4.1",
+    "prettier": "^3.9.6",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "pg": "^8.23.0"
   }
 }

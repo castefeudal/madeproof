@@ -13,9 +13,12 @@ const lines = readline.createInterface({ input: process.stdin, crlfDelay: Infini
 lines.on('line', async (line: string) => {
   if (!line.trim()) return;
   let message: any;
-  try { message = JSON.parse(line); }
-  catch {
-    process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })}\n`);
+  try {
+    message = JSON.parse(line);
+  } catch {
+    process.stdout.write(
+      `${JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } })}\n`,
+    );
     return;
   }
   const response = await handleMcpMessage(message, backend);

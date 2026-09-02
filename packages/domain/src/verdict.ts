@@ -3,10 +3,12 @@ import type { AcceptanceCriterion, VerificationResult, VerdictDecision } from '.
 export function calculateVerdict(
   criteria: AcceptanceCriterion[],
   results: VerificationResult[],
-  options: { unresolvedPolicyViolation?: boolean; infrastructureError?: boolean } = {}
+  options: { unresolvedPolicyViolation?: boolean; infrastructureError?: boolean } = {},
 ): VerdictDecision {
   const byCriterion = new Map(results.map((result) => [result.criterionId, result]));
-  const blocking = criteria.filter((criterion) => criterion.required && criterion.severity === 'blocking');
+  const blocking = criteria.filter(
+    (criterion) => criterion.required && criterion.severity === 'blocking',
+  );
   const failed: string[] = [];
   const review: string[] = [];
   const errors: string[] = [];
@@ -21,7 +23,8 @@ export function calculateVerdict(
     confidences.push(result.confidence);
     if (result.status === 'FAILED') failed.push(criterion.id);
     else if (result.status === 'ERROR') errors.push(criterion.id);
-    else if (result.status !== 'PASSED' || result.confidence < criterion.confidenceRequirement) review.push(criterion.id);
+    else if (result.status !== 'PASSED' || result.confidence < criterion.confidenceRequirement)
+      review.push(criterion.id);
   }
 
   const confidence = confidences.length ? Math.min(...confidences) : 0;
@@ -32,7 +35,7 @@ export function calculateVerdict(
       reason: 'Verification infrastructure failed for at least one blocking criterion.',
       failedCriterionIds: failed,
       reviewCriterionIds: review,
-      errorCriterionIds: errors
+      errorCriterionIds: errors,
     };
   }
   if (failed.length) {
@@ -42,7 +45,7 @@ export function calculateVerdict(
       reason: `${failed.length} blocking criterion${failed.length === 1 ? '' : 'a'} failed.`,
       failedCriterionIds: failed,
       reviewCriterionIds: review,
-      errorCriterionIds: errors
+      errorCriterionIds: errors,
     };
   }
   if (options.unresolvedPolicyViolation || review.length) {
@@ -54,7 +57,7 @@ export function calculateVerdict(
         : `${review.length} blocking criterion${review.length === 1 ? '' : 'a'} require review or stronger evidence.`,
       failedCriterionIds: failed,
       reviewCriterionIds: review,
-      errorCriterionIds: errors
+      errorCriterionIds: errors,
     };
   }
   return {
@@ -63,6 +66,6 @@ export function calculateVerdict(
     reason: 'Every required blocking criterion passed with sufficient evidence and confidence.',
     failedCriterionIds: [],
     reviewCriterionIds: [],
-    errorCriterionIds: []
+    errorCriterionIds: [],
   };
 }

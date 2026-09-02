@@ -14,7 +14,7 @@ import {
   FileExistsCheck,
   HttpCheck,
   ManualReviewCheck,
-  SemanticCheck
+  SemanticCheck,
 } from './checks.js';
 
 export class CheckRegistry {
@@ -56,32 +56,51 @@ function taskStatusForVerdict(verdict: string): any {
 export class VerificationEngine {
   constructor(private readonly registry = new CheckRegistry()) {}
 
-  async verify(context: VerificationContext): Promise<{ decision: any; receipt: any; results: VerificationResult[] }> {
+  async verify(
+    context: VerificationContext,
+  ): Promise<{ decision: any; receipt: any; results: VerificationResult[] }> {
     if (context.run.status !== 'AWAITING_EVIDENCE' && context.run.status !== 'RUNNING') {
-      throw new MadeProofError('RUN_NOT_VERIFIABLE', `Run in ${context.run.status} cannot enter verification`, 409);
+      throw new MadeProofError(
+        'RUN_NOT_VERIFIABLE',
+        `Run in ${context.run.status} cannot enter verification`,
+        409,
+      );
     }
     assertRunTransition(context.run.status, 'VERIFYING');
-    context.store.updateRunStatus(context.workspaceId, context.run.id, context.run.status, 'VERIFYING');
+    context.store.updateRunStatus(
+      context.workspaceId,
+      context.run.id,
+      context.run.status,
+      'VERIFYING',
+    );
     const task = context.store.getTask(context.workspaceId, context.run.task_id);
     if (task.status !== 'AWAITING_EVIDENCE' && task.status !== 'IN_PROGRESS') {
-      throw new MadeProofError('TASK_NOT_VERIFIABLE', `Task in ${task.status} cannot enter verification`, 409);
+      throw new MadeProofError(
+        'TASK_NOT_VERIFIABLE',
+        `Task in ${task.status} cannot enter verification`,
+        409,
+      );
     }
     assertTaskTransition(task.status, 'VERIFYING');
     context.store.updateTaskStatus(context.workspaceId, task.id, task.status, 'VERIFYING');
 
     const results: VerificationResult[] = [];
-    for (const criterion of [...context.contract.acceptanceCriteria].sort((a, b) => a.position - b.position)) {
+    for (const criterion of [...context.contract.acceptanceCriteria].sort(
+      (a, b) => a.position - b.position,
+    )) {
       const checkRecord = context.store.upsertCheck({
         workspaceId: context.workspaceId,
         runId: context.run.id,
         criterionId: criterion.id,
         type: criterion.verificationType,
-        config: criterion.expected
+        config: criterion.expected,
       });
       context.store.setCheckStatus(context.workspaceId, checkRecord.id, 'RUNNING');
       let checkResult: VerificationResult;
       try {
-        checkResult = await this.registry.get(criterion.verificationType).execute(context, criterion, checkRecord.id);
+        checkResult = await this.registry
+          .get(criterion.verificationType)
+          .execute(context, criterion, checkRecord.id);
       } catch (error) {
         checkResult = this.infrastructureError(checkRecord.id, criterion, error);
       }
@@ -91,45 +110,103 @@ export class VerificationEngine {
 
     const decision = calculateVerdict(context.contract.acceptanceCriteria, results);
     const verdict = context.store.saveVerdict(context.workspaceId, context.run.id, decision);
-    context.store.updateRunStatus(context.workspaceId, context.run.id, 'VERIFYING', decision.verdict === 'ERROR' ? 'FAILED' : 'COMPLETED');
+    context.store.updateRunStatus(
+      context.workspaceId,
+      context.run.id,
+      'VERIFYING',
+      decision.verdict === 'ERROR' ? 'FAILED' : 'COMPLETED',
+    );
     const currentTask = context.store.getTask(context.workspaceId, task.id);
     const nextTaskStatus = taskStatusForVerdict(decision.verdict);
     assertTaskTransition(currentTask.status, nextTaskStatus);
-    context.store.updateTaskStatus(context.workspaceId, task.id, currentTask.status, nextTaskStatus);
+    context.store.updateTaskStatus(
+      context.workspaceId,
+      task.id,
+      currentTask.status,
+      nextTaskStatus,
+    );
 
     const evidence = context.store.listEvidence(context.workspaceId, context.run.id);
     const receiptBody: Record<string, unknown> = {
       schemaVersion: 1,
       product: 'MADEPROOF',
       task: { id: task.id, title: task.title, projectId: task.project_id },
-      contract: { id: context.contract.id, version: context.contract.version, digest: sha256(canonicalJson(context.contract)) },
-      run: { id: context.run.id, attempt: context.run.attempt, artifactRef: context.run.artifact_ref, metadata: context.run.metadata },
+      contract: {
+        id: context.contract.id,
+        version: context.contract.version,
+        digest: sha256(canonicalJson(context.contract)),
+      },
+      run: {
+        id: context.run.id,
+        attempt: context.run.attempt,
+        artifactRef: context.run.artifact_ref,
+        metadata: context.run.metadata,
+      },
       timestamps: { runCreatedAt: context.run.created_at, verifiedAt: new Date().toISOString() },
       criteria: context.contract.acceptanceCriteria.map((criterion) => {
         const checkResult = results.find((item) => item.criterionId === criterion.id);
-        return { id: criterion.id, title: criterion.title, required: criterion.required, severity: criterion.severity, result: checkResult?.status, confidence: checkResult?.confidence, evidenceIds: checkResult?.evidenceIds ?? [] };
+        return {
+          id: criterion.id,
+          title: criterion.title,
+          required: criterion.required,
+          severity: criterion.severity,
+          result: checkResult?.status,
+          confidence: checkResult?.confidence,
+          evidenceIds: checkResult?.evidenceIds ?? [],
+        };
       }),
-      evidenceDigest: sha256(canonicalJson(evidence.map((item) => ({ id: item.id, type: item.type, hash: item.contentHash, provenance: item.provenance, trustTier: item.trustTier })))),
+      evidenceDigest: sha256(
+        canonicalJson(
+          evidence.map((item) => ({
+            id: item.id,
+            type: item.type,
+            hash: item.contentHash,
+            provenance: item.provenance,
+            trustTier: item.trustTier,
+          })),
+        ),
+      ),
       verdict: decision,
       machineVerdict: verdict.machine_verdict,
       humanVerdict: verdict.human_verdict ?? null,
       verifier: { engine: 'madeproof-core', version: '0.1.0', checkTypes: this.registry.list() },
-      cost: { currency: 'USD', amount: 0, semanticProviderCalls: 0 }
+      cost: { currency: 'USD', amount: 0, semanticProviderCalls: 0 },
     };
     const canonical = canonicalJson(receiptBody);
     const digest = sha256(canonical);
     let signature: string | undefined;
     let signingKeyId: string | undefined;
     if (process.env.RECEIPT_SIGNING_PRIVATE_KEY) {
-      signature = crypto.sign(null, Buffer.from(canonical), process.env.RECEIPT_SIGNING_PRIVATE_KEY).toString('base64url');
+      signature = crypto
+        .sign(null, Buffer.from(canonical), process.env.RECEIPT_SIGNING_PRIVATE_KEY)
+        .toString('base64url');
       signingKeyId = process.env.RECEIPT_SIGNING_KEY_ID || 'default';
     }
-    const receipt = context.store.saveReceipt({ workspaceId: context.workspaceId, runId: context.run.id, receipt: receiptBody, digest, signature, signingKeyId });
-    context.store.appendAudit({ workspaceId: context.workspaceId, actorId: context.actorId, actorType: 'SYSTEM', action: 'verification.completed', resourceType: 'run', resourceId: context.run.id, resulting: { decision, receiptDigest: digest } });
+    const receipt = context.store.saveReceipt({
+      workspaceId: context.workspaceId,
+      runId: context.run.id,
+      receipt: receiptBody,
+      digest,
+      signature,
+      signingKeyId,
+    });
+    context.store.appendAudit({
+      workspaceId: context.workspaceId,
+      actorId: context.actorId,
+      actorType: 'SYSTEM',
+      action: 'verification.completed',
+      resourceType: 'run',
+      resourceId: context.run.id,
+      resulting: { decision, receiptDigest: digest },
+    });
     return { decision, receipt, results };
   }
 
-  private infrastructureError(checkId: string, criterion: AcceptanceCriterion, error: unknown): VerificationResult {
+  private infrastructureError(
+    checkId: string,
+    criterion: AcceptanceCriterion,
+    error: unknown,
+  ): VerificationResult {
     const now = new Date().toISOString();
     return {
       id: `res_${crypto.randomUUID().replaceAll('-', '')}`,
@@ -144,7 +221,7 @@ export class VerificationEngine {
       evidenceIds: [],
       confidence: 0,
       errorCode: 'VERIFIER_INFRASTRUCTURE_ERROR',
-      errorMessage: error instanceof Error ? error.message : String(error)
+      errorMessage: error instanceof Error ? error.message : String(error),
     };
   }
 }

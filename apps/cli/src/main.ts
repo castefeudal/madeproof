@@ -7,7 +7,9 @@ const args = process.argv.slice(2);
 const jsonMode = args.includes('--json');
 const filtered = args.filter((arg: string) => arg !== '--json');
 const group = filtered[0];
-const action = ['project', 'task', 'contract', 'run', 'evidence'].includes(group ?? '') ? filtered[1] : undefined;
+const action = ['project', 'task', 'contract', 'run', 'evidence'].includes(group ?? '')
+  ? filtered[1]
+  : undefined;
 
 function flag(name: string): string | undefined {
   const index = filtered.indexOf(`--${name}`);
@@ -21,10 +23,17 @@ function requiredFlag(name: string): string {
   return value;
 }
 
-const configPath = process.env.MADEPROOF_CLI_CONFIG ?? path.join(os.homedir(), '.config', 'madeproof', 'config.json');
+const configPath =
+  process.env.MADEPROOF_CLI_CONFIG ??
+  path.join(os.homedir(), '.config', 'madeproof', 'config.json');
 function readConfig(): { baseUrl: string; apiKey: string } {
-  if (process.env.MADEPROOF_API_KEY) return { baseUrl: process.env.MADEPROOF_BASE_URL ?? 'http://127.0.0.1:3210', apiKey: process.env.MADEPROOF_API_KEY };
-  if (!fs.existsSync(configPath)) throw new Error('Not logged in. Run: madeproof login --base-url URL --api-key KEY');
+  if (process.env.MADEPROOF_API_KEY)
+    return {
+      baseUrl: process.env.MADEPROOF_BASE_URL ?? 'http://127.0.0.1:3210',
+      apiKey: process.env.MADEPROOF_API_KEY,
+    };
+  if (!fs.existsSync(configPath))
+    throw new Error('Not logged in. Run: madeproof login --base-url URL --api-key KEY');
   return JSON.parse(fs.readFileSync(configPath, 'utf8'));
 }
 function output(value: any): void {
@@ -69,29 +78,72 @@ try {
   }
   const client = new MadeProof(readConfig());
   let result: any;
-  if (group === 'project' && action === 'create') result = await client.projects.create({ name: requiredFlag('name'), projectType: flag('type'), repositoryUrl: flag('repository') });
+  if (group === 'project' && action === 'create')
+    result = await client.projects.create({
+      name: requiredFlag('name'),
+      projectType: flag('type'),
+      repositoryUrl: flag('repository'),
+    });
   else if (group === 'project' && action === 'list') result = await client.projects.list();
-  else if (group === 'task' && action === 'create') result = await client.tasks.create({ projectId: requiredFlag('project'), title: requiredFlag('title'), intent: requiredFlag('intent'), template: flag('template') });
-  else if (group === 'task' && action === 'show') result = await client.tasks.get(requiredFlag('id'));
-  else if (group === 'contract' && action === 'generate') result = await client.contracts.generate(requiredFlag('task'));
-  else if (group === 'contract' && action === 'show') result = await client.contracts.list(requiredFlag('task'));
-  else if (group === 'run' && action === 'start') result = await client.runs.start(requiredFlag('task'), { metadata: flag('metadata') ? JSON.parse(flag('metadata')!) : undefined, artifactRef: flag('artifact') });
-  else if (group === 'evidence' && action === 'add') result = await client.evidence.add(requiredFlag('run'), { type: requiredFlag('type'), value: JSON.parse(requiredFlag('value')), criterionId: flag('criterion') });
+  else if (group === 'task' && action === 'create')
+    result = await client.tasks.create({
+      projectId: requiredFlag('project'),
+      title: requiredFlag('title'),
+      intent: requiredFlag('intent'),
+      template: flag('template'),
+    });
+  else if (group === 'task' && action === 'show')
+    result = await client.tasks.get(requiredFlag('id'));
+  else if (group === 'contract' && action === 'generate')
+    result = await client.contracts.generate(requiredFlag('task'));
+  else if (group === 'contract' && action === 'show')
+    result = await client.contracts.list(requiredFlag('task'));
+  else if (group === 'run' && action === 'start')
+    result = await client.runs.start(requiredFlag('task'), {
+      metadata: flag('metadata') ? JSON.parse(flag('metadata')!) : undefined,
+      artifactRef: flag('artifact'),
+    });
+  else if (group === 'evidence' && action === 'add')
+    result = await client.evidence.add(requiredFlag('run'), {
+      type: requiredFlag('type'),
+      value: JSON.parse(requiredFlag('value')),
+      criterionId: flag('criterion'),
+    });
   else if (group === 'verify') {
     result = await client.verification.verify(requiredFlag('run'));
     output(result);
     const verdict = result.decision?.verdict;
-    exit(verdict === 'VERIFIED' ? 0 : verdict === 'FAILED' ? 2 : verdict === 'REVIEW_REQUIRED' ? 3 : 4);
+    exit(
+      verdict === 'VERIFIED' ? 0 : verdict === 'FAILED' ? 2 : verdict === 'REVIEW_REQUIRED' ? 3 : 4,
+    );
   } else if (group === 'status') result = await client.verification.get(requiredFlag('run'));
   else if (group === 'failures') result = await client.verification.failures(requiredFlag('run'));
-  else if (group === 'retry') result = await client.runs.retry(requiredFlag('run'), { metadata: flag('metadata') ? JSON.parse(flag('metadata')!) : undefined, artifactRef: flag('artifact') });
+  else if (group === 'retry')
+    result = await client.runs.retry(requiredFlag('run'), {
+      metadata: flag('metadata') ? JSON.parse(flag('metadata')!) : undefined,
+      artifactRef: flag('artifact'),
+    });
   else if (group === 'receipt') result = await client.receipts.byRun(requiredFlag('run'));
   else help();
   output(result);
 } catch (error) {
-  const payload = error instanceof MadeProofApiError
-    ? { error: { code: error.code, message: error.message, status: error.status, requestId: error.requestId } }
-    : { error: { code: 'CLI_ERROR', message: error instanceof Error ? error.message : String(error) } };
-  if (jsonMode) console.log(JSON.stringify(payload)); else console.error(JSON.stringify(payload, null, 2));
+  const payload =
+    error instanceof MadeProofApiError
+      ? {
+          error: {
+            code: error.code,
+            message: error.message,
+            status: error.status,
+            requestId: error.requestId,
+          },
+        }
+      : {
+          error: {
+            code: 'CLI_ERROR',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        };
+  if (jsonMode) console.log(JSON.stringify(payload));
+  else console.error(JSON.stringify(payload, null, 2));
   exit(4);
 }

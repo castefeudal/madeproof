@@ -19,7 +19,8 @@ export async function readJson(request: any, maxBytes = 1024 * 1024): Promise<an
   let bytes = 0;
   for await (const chunk of request) {
     bytes += chunk.length;
-    if (bytes > maxBytes) throw new MadeProofError('PAYLOAD_TOO_LARGE', 'Request body exceeds 1 MiB', 413);
+    if (bytes > maxBytes)
+      throw new MadeProofError('PAYLOAD_TOO_LARGE', 'Request body exceeds 1 MiB', 413);
     chunks.push(chunk);
   }
   if (!bytes) return {};
@@ -30,14 +31,31 @@ export async function readJson(request: any, maxBytes = 1024 * 1024): Promise<an
   }
 }
 
-export function sendJson(response: any, status: number, body: unknown, headers: Record<string, string> = {}): void {
+export function sendJson(
+  response: any,
+  status: number,
+  body: unknown,
+  headers: Record<string, string> = {},
+): void {
   const payload = JSON.stringify(body);
-  response.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(payload), ...headers });
+  response.writeHead(status, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Length': Buffer.byteLength(payload),
+    ...headers,
+  });
   response.end(payload);
 }
 
-export function sendText(response: any, status: number, body: string, contentType = 'text/plain; charset=utf-8'): void {
-  response.writeHead(status, { 'Content-Type': contentType, 'Content-Length': Buffer.byteLength(body) });
+export function sendText(
+  response: any,
+  status: number,
+  body: string,
+  contentType = 'text/plain; charset=utf-8',
+): void {
+  response.writeHead(status, {
+    'Content-Type': contentType,
+    'Content-Length': Buffer.byteLength(body),
+  });
   response.end(body);
 }
 
@@ -47,21 +65,32 @@ const mime: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
-  '.json': 'application/json; charset=utf-8'
+  '.json': 'application/json; charset=utf-8',
 };
 
-export function serveStatic(response: any, root: string, requestPath: string, fallback = 'index.html'): boolean {
+export function serveStatic(
+  response: any,
+  root: string,
+  requestPath: string,
+  fallback = 'index.html',
+): boolean {
   const normalized = requestPath === '/' ? fallback : requestPath.replace(/^\/+/, '');
   let target = path.resolve(root, normalized);
   const safeRoot = path.resolve(root);
   if (!target.startsWith(`${safeRoot}${path.sep}`) && target !== safeRoot) return false;
-  if (!fs.existsSync(target) || fs.statSync(target).isDirectory()) target = path.resolve(root, fallback);
-  if (!target.startsWith(`${safeRoot}${path.sep}`) || !fs.existsSync(target) || !fs.statSync(target).isFile()) return false;
+  if (!fs.existsSync(target) || fs.statSync(target).isDirectory())
+    target = path.resolve(root, fallback);
+  if (
+    !target.startsWith(`${safeRoot}${path.sep}`) ||
+    !fs.existsSync(target) ||
+    !fs.statSync(target).isFile()
+  )
+    return false;
   const stat = fs.statSync(target);
   response.writeHead(200, {
     'Content-Type': mime[path.extname(target)] ?? 'application/octet-stream',
     'Content-Length': stat.size,
-    'Cache-Control': path.basename(target) === 'index.html' ? 'no-store' : 'public, max-age=3600'
+    'Cache-Control': path.basename(target) === 'index.html' ? 'no-store' : 'public, max-age=3600',
   });
   fs.createReadStream(target).pipe(response);
   return true;
