@@ -8,11 +8,15 @@ async function waitForVerification(baseUrl: string, auth: any, runId: string, ti
   let last: any;
   while (Date.now() < deadline) {
     const response = await api<any>(baseUrl, auth, 'GET', `/runs/${runId}/verification`);
+    if (response.status === 429) {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      continue;
+    }
     assert.equal(response.status, 200);
     last = response.body;
     if (last.verdict) return last;
     if (last.job?.status === 'FAILED' || last.job?.status === 'CANCELLED') throw new Error(`verification job ${last.job.status}: ${JSON.stringify(last.job)}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
   throw new Error(`verification timed out: ${JSON.stringify(last)}`);
 }
