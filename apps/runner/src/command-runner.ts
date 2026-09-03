@@ -88,7 +88,7 @@ export class SafeCommandRunner {
 
     const isolation = ['ephemeral-copy', 'timeout', 'environment-allowlist', 'resource-limits'];
     let argv: string[];
-    if (process.platform === 'linux' && commandExists('bwrap')) {
+    if (process.platform === 'linux' && commandExists('bwrap') && !this.allowWeakIsolationFallback) {
       argv = ['prlimit','--as=1073741824','--cpu=120','--nproc=256','--nofile=1024','--','bwrap','--die-with-parent','--new-session','--unshare-user','--unshare-pid','--unshare-ipc','--unshare-uts','--unshare-cgroup',...(input.network === 'disabled' ? ['--unshare-net'] : []),'--ro-bind','/usr','/usr','--ro-bind','/bin','/bin',...(fs.existsSync('/lib') ? ['--ro-bind','/lib','/lib'] : []),...(fs.existsSync('/lib64') ? ['--ro-bind','/lib64','/lib64'] : []),...(fs.existsSync('/etc/ssl') ? ['--ro-bind','/etc/ssl','/etc/ssl'] : []),'--proc','/proc','--dev','/dev','--tmpfs','/tmp','--bind',workDir,'/workspace','--chdir','/workspace','--',input.command,...input.args];
       isolation.push('bubblewrap-user-mount-pid-ipc-uts-cgroup-namespaces', 'filesystem-allowlist');
       if (input.network === 'disabled') isolation.push('network-namespace');
