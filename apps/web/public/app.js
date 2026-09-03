@@ -171,6 +171,22 @@ async function renderRun(runId) {
     api(`/runs/${runId}/verification`),
     api(`/runs/${runId}/receipt`).catch(() => null)
   ]);
+  if (!verification.verdict) {
+    const jobStatus = verification.job?.status || 'QUEUED';
+    routeView.innerHTML = `
+      <header class="page-head"><div><p class="eyebrow">RUN ${run.attempt}</p><h1>Outcome verification</h1><p class="muted">${escapeHtml(run.artifact_ref || 'No artifact reference')}</p></div><button class="secondary" id="back-dashboard">Dashboard</button></header>
+      <section class="result-hero">
+        ${status(jobStatus)}
+        <h1>VERIFYING</h1>
+        <p><strong>${verification.results.length} checks completed so far.</strong></p>
+        <p>Independent worker and runner checks are still processing this run.</p>
+      </section>`;
+    document.querySelector('#back-dashboard').addEventListener('click', () => navigate('/app'));
+    setTimeout(() => {
+      if (state.actor && location.pathname === `/runs/${runId}`) renderRun(runId).catch((error) => showToast(error.message));
+    }, 500);
+    return;
+  }
   const verdict = verification.verdict.machine_verdict;
   const results = verification.results;
   const failed = results.filter(item => item.status !== 'PASSED');
