@@ -30,8 +30,8 @@ export interface SafeCommandRunnerOptions {
 }
 
 function commandExists(command: string): boolean {
-  const paths = (process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin').split(path.delimiter);
-  return paths.some((entry) => fs.existsSync(path.join(entry, command)));
+  const paths: string[] = String(process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin').split(path.delimiter);
+  return paths.some((entry: string) => fs.existsSync(path.join(entry, command)));
 }
 
 function isWithin(root: string, target: string): boolean {
@@ -83,39 +83,18 @@ export class SafeCommandRunner {
     fs.mkdirSync(tmpDir, { recursive: true });
     fs.cpSync(source, workDir, { recursive: true, dereference: false, filter: (src: string) => !src.includes(`${path.sep}.git${path.sep}`) && !src.endsWith(`${path.sep}.git`) });
 
-    const env: Record<string, string> = {
-      PATH: process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin',
-      HOME: '/tmp',
-      TMPDIR: '/tmp',
-      CI: '1',
-      NODE_ENV: 'test'
-    };
+    const env: Record<string, string> = { PATH: String(process.env.PATH ?? '/usr/local/bin:/usr/bin:/bin'), HOME: '/tmp', TMPDIR: '/tmp', CI: '1', NODE_ENV: 'test' };
     for (const key of input.envAllowlist ?? []) if (typeof process.env[key] === 'string') env[key] = process.env[key]!;
 
     const isolation = ['ephemeral-copy', 'timeout', 'environment-allowlist', 'resource-limits'];
     let argv: string[];
     if (process.platform === 'linux' && commandExists('bwrap')) {
-      argv = [
-        'prlimit', '--as=1073741824', '--cpu=120', '--nproc=256', '--nofile=1024', '--',
-        'bwrap', '--die-with-parent', '--new-session',
-        '--unshare-user', '--unshare-pid', '--unshare-ipc', '--unshare-uts', '--unshare-cgroup',
-        ...(input.network === 'disabled' ? ['--unshare-net'] : []),
-        '--ro-bind', '/usr', '/usr',
-        '--ro-bind', '/bin', '/bin',
-        ...(fs.existsSync('/lib') ? ['--ro-bind', '/lib', '/lib'] : []),
-        ...(fs.existsSync('/lib64') ? ['--ro-bind', '/lib64', '/lib64'] : []),
-        ...(fs.existsSync('/etc/ssl') ? ['--ro-bind', '/etc/ssl', '/etc/ssl'] : []),
-        '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp',
-        '--bind', workDir, '/workspace', '--chdir', '/workspace',
-        '--', input.command, ...input.args
-      ];
+      argv = ['prlimit','--as=1073741824','--cpu=120','--nproc=256','--nofile=1024','--','bwrap','--die-with-parent','--new-session','--unshare-user','--unshare-pid','--unshare-ipc','--unshare-uts','--unshare-cgroup',...(input.network === 'disabled' ? ['--unshare-net'] : []),'--ro-bind','/usr','/usr','--ro-bind','/bin','/bin',...(fs.existsSync('/lib') ? ['--ro-bind','/lib','/lib'] : []),...(fs.existsSync('/lib64') ? ['--ro-bind','/lib64','/lib64'] : []),...(fs.existsSync('/etc/ssl') ? ['--ro-bind','/etc/ssl','/etc/ssl'] : []),'--proc','/proc','--dev','/dev','--tmpfs','/tmp','--bind',workDir,'/workspace','--chdir','/workspace','--',input.command,...input.args];
       isolation.push('bubblewrap-user-mount-pid-ipc-uts-cgroup-namespaces', 'filesystem-allowlist');
       if (input.network === 'disabled') isolation.push('network-namespace');
     } else {
       if (process.platform === 'linux' && !this.allowWeakIsolationFallback) throw new MadeProofError('RUNNER_SANDBOX_UNAVAILABLE', 'Bubblewrap is required for production runner isolation', 500);
-      argv = process.platform === 'linux' && commandExists('prlimit')
-        ? ['prlimit', '--as=1073741824', '--cpu=120', '--nproc=256', '--nofile=1024', '--', input.command, ...input.args]
-        : [input.command, ...input.args];
+      argv = process.platform === 'linux' && commandExists('prlimit') ? ['prlimit','--as=1073741824','--cpu=120','--nproc=256','--nofile=1024','--',input.command,...input.args] : [input.command,...input.args];
       isolation.push('weak-isolation-fallback');
     }
 
@@ -129,17 +108,9 @@ export class SafeCommandRunner {
         const cap = 2 * 1024 * 1024;
         processHandle.stdout.on('data', (chunk: any) => { if (stdout.length < cap) stdout += String(chunk).slice(0, cap - stdout.length); });
         processHandle.stderr.on('data', (chunk: any) => { if (stderr.length < cap) stderr += String(chunk).slice(0, cap - stderr.length); });
-        const timer = setTimeout(() => {
-          timedOut = true;
-          if (process.platform !== 'win32' && processHandle.pid) {
-            try { process.kill(-processHandle.pid, 'SIGKILL'); } catch { processHandle.kill('SIGKILL'); }
-          } else processHandle.kill('SIGKILL');
-        }, Math.max(100, input.timeoutMs));
+        const timer = setTimeout(() => { timedOut = true; if (process.platform !== 'win32' && processHandle.pid) { try { process.kill(-processHandle.pid, 'SIGKILL'); } catch { processHandle.kill('SIGKILL'); } } else processHandle.kill('SIGKILL'); }, Math.max(100, input.timeoutMs));
         processHandle.once('error', (error: Error) => { clearTimeout(timer); reject(error); });
-        processHandle.once('close', (exitCode: number | null, signal: string | null) => {
-          clearTimeout(timer);
-          resolve({ exitCode, signal, stdout, stderr, durationMs: Date.now() - started, timedOut, isolation });
-        });
+        processHandle.once('close', (exitCode: number | null, signal: string | null) => { clearTimeout(timer); resolve({ exitCode, signal, stdout, stderr, durationMs: Date.now() - started, timedOut, isolation }); });
       });
     } finally {
       fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 3, retryDelay: 20 });
