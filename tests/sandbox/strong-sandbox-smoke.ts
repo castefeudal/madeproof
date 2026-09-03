@@ -11,17 +11,14 @@ try {
   fs.writeFileSync(path.join(root, 'payload.txt'), 'sandbox-ok');
   const runner = new SafeCommandRunner({ allowedRoots: [root] });
   const script = `const fs=require('fs');if(fs.existsSync('/app'))process.exit(42);if(process.env.MADEPROOF_SANDBOX_SECRET)process.exit(43);process.stdout.write(fs.readFileSync('payload.txt','utf8'));`;
-  // The CI container is itself launched with --network=none. Keeping the inner
-  // bubblewrap network namespace enabled here would require NET_ADMIN merely to
-  // configure loopback inside nested Docker. Production calls that request
-  // network:'disabled' still receive bwrap --unshare-net in SafeCommandRunner.
-  const result = await runner.execute({ command: 'node', args: ['-e', script], cwd: root, timeoutMs: 5000, network: 'enabled' });
+  const result = await runner.execute({ command: 'node', args: ['-e', script], cwd: root, timeoutMs: 5000, network: 'disabled' });
   assert.equal(result.exitCode, 0, result.stderr);
   assert.equal(result.stdout, 'sandbox-ok');
   assert.ok(result.isolation.includes('bubblewrap-user-mount-pid-ipc-uts-cgroup-namespaces'));
   assert.ok(result.isolation.includes('filesystem-allowlist'));
+  assert.ok(result.isolation.includes('network-namespace'));
   assert.ok(!result.isolation.includes('weak-isolation-fallback'));
-  console.log(JSON.stringify({ strongSandbox: 'PASS', isolation: result.isolation, outerNetwork: 'none' }));
+  console.log(JSON.stringify({ strongSandbox: 'PASS', isolation: result.isolation }));
 } finally {
   if (previous === undefined) delete process.env.MADEPROOF_SANDBOX_SECRET;
   else process.env.MADEPROOF_SANDBOX_SECRET = previous;
