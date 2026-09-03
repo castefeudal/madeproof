@@ -35,18 +35,18 @@ try {
   assert.equal(queuedFailed.status, 202);
   assert.equal(queuedFailed.body.status, 'QUEUED');
   const failed = await waitForVerification(runtime.url, auth, run1.body.id);
-  assert.equal(failed.verdict.machine_verdict, 'FAILED');
-  assert.equal(failed.results.filter((item: any) => item.status === 'PASSED').length, 5);
-  assert.equal(failed.results.find((item: any) => item.summary.toLowerCase().includes('keyboard'))?.status, 'FAILED');
-  assert.equal(failed.results.find((item: any) => item.summary.includes('ARIA state'))?.status, 'FAILED');
+  assert.equal(failed.verdict.machine_verdict, 'FAILED', JSON.stringify(failed, null, 2));
+  assert.equal(failed.results.filter((item: any) => item.status === 'PASSED').length, 5, JSON.stringify(failed.results, null, 2));
+  assert.equal(failed.results.find((item: any) => item.summary.toLowerCase().includes('keyboard'))?.status, 'FAILED', JSON.stringify(failed.results, null, 2));
+  assert.equal(failed.results.find((item: any) => item.summary.includes('ARIA state'))?.status, 'FAILED', JSON.stringify(failed.results, null, 2));
 
   const run2 = await api<any>(runtime.url, auth, 'POST', `/runs/${run1.body.id}/retry`, { metadata: { demoFixed: true }, artifactRef: 'demo-target@fixed' });
   assert.equal(run2.body.attempt, 2);
   const queuedVerified = await api<any>(runtime.url, auth, 'POST', `/runs/${run2.body.id}/verify`, {}, { 'Idempotency-Key': 'e2e-verify-passed' });
   assert.equal(queuedVerified.status, 202);
   const verified = await waitForVerification(runtime.url, auth, run2.body.id);
-  assert.equal(verified.verdict.machine_verdict, 'VERIFIED');
-  assert.equal(verified.results.filter((item: any) => item.status === 'PASSED').length, 7);
+  assert.equal(verified.verdict.machine_verdict, 'VERIFIED', JSON.stringify(verified, null, 2));
+  assert.equal(verified.results.filter((item: any) => item.status === 'PASSED').length, 7, JSON.stringify(verified.results, null, 2));
   const receiptResponse = await api<any>(runtime.url, auth, 'GET', `/runs/${run2.body.id}/receipt`);
   assert.equal(receiptResponse.status, 200);
   assert.match(receiptResponse.body.digest, /^[a-f0-9]{64}$/);
