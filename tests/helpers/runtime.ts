@@ -41,8 +41,8 @@ export async function startTestApplication(label = 'test', options: { distribute
     const registration = await app.service.createRunner(actor, { name: `test-runner-${label}`, version: '0.1.0', capabilities });
     workerStore = new SqliteDistributedStore(dataDir);
     await workerStore.migrate();
-    worker = new VerificationWorker(workerStore, new EvidenceService(dataDir), { workerId: `test-worker-${label}`, leaseSeconds: 5, idleDelayMs: 20, runnerPollDelayMs: 20, runnerWaitMaxMs: 30_000, baseUrl: started.url, projectRoot: path.resolve('.') });
-    runner = new RunnerAgent({ baseUrl: started.url, credential: registration.secret, version: '0.1.0', capabilities, allowedRoots: [path.resolve('.')], pollIntervalMs: 20, allowRootProcess: typeof process.getuid === 'function' && process.getuid() === 0, allowWeakIsolationFallback: true });
+    worker = new VerificationWorker(workerStore, new EvidenceService(dataDir), { workerId: `test-worker-${label}`, leaseSeconds: 5, idleDelayMs: 20, runnerPollDelayMs: 50, runnerWaitMaxMs: 30_000, baseUrl: started.url, projectRoot: path.resolve('.') });
+    runner = new RunnerAgent({ baseUrl: started.url, credential: registration.secret, version: '0.1.0', capabilities, allowedRoots: [path.resolve('.')], pollIntervalMs: 300, allowRootProcess: typeof process.getuid === 'function' && process.getuid() === 0, allowWeakIsolationFallback: true });
     workerLoop = worker.runLoop();
     runnerLoop = runner.runLoop();
   }
