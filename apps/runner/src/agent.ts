@@ -33,7 +33,7 @@ export class RunnerAgent {
     await this.heartbeat();
     while (!this.stopping) {
       const worked = await this.pollOnce();
-      if (!worked) await new Promise((resolve) => setTimeout(resolve, this.options.pollIntervalMs ?? 500));
+      if (!worked) await this.sleep(this.options.pollIntervalMs ?? 500);
     }
   }
 
@@ -44,6 +44,10 @@ export class RunnerAgent {
   async pollOnce(): Promise<boolean> {
     const response = await fetch(`${this.options.baseUrl}/api/v1/runner/poll`, { method: 'POST', headers: this.headers(), body: JSON.stringify({ version: this.version, capabilities: this.capabilities }) });
     if (response.status === 204) return false;
+    if (response.status === 429) {
+      await this.sleep(this.retryDelayMs(response));
+      return false;
+    }
     const body = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(`Runner poll failed: ${response.status} ${JSON.stringify(body)}`);
     const job = body.job;
@@ -63,9 +67,28 @@ export class RunnerAgent {
   }
 
   private async request(pathname: string, body: unknown): Promise<any> {
-    const response = await fetch(`${this.options.baseUrl}${pathname}`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body) });
-    const payload = response.status === 204 ? null : await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(`Runner API request failed: ${response.status} ${JSON.stringify(payload)}`);
-    return payload;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const response = await fetch(`${this.options.baseUrl}${pathname}`, { method: 'POST', headers: this.headers(), body: JSON.stringify(body) });
+      if (response.status === 429 && attempt < 2) {
+        await this.sleep(this.retryDelayMs(response));
+        continue;
+      }
+      const payload = response.status === 204 ? null : await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(`Runner API request failed: ${response.status} ${JSON.stringify(payload)}`);
+      return payload;
+    }
+    throw new Error('Runner API request exhausted retries');
+  }
+
+  private retryDelayMs(response: Response): number {
+    const resetSeconds = Number(response.headers.get('ratelimit-reset') ?? 0);
+    if (Number.isFinite(resetSeconds) && resetSeconds > 0) return Math.max(250, Math.min(60_000, resetSeconds * 1000 - Date.now() + 250));
+    const retryAfter = Number(response.headers.get('retry-after') ?? 1);
+    return Math.max(250, Math.min(60_000, (Number.isFinite(retryAfter) ? retryAfter : 1) * 1000));
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    if (this.stopping) return;
+    await new Promise((resolve) => setTimeout(resolve, ms));
   }
 }
