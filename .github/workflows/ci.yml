@@ -94,7 +94,7 @@ jobs:
           docker run --rm --entrypoint sh madeproof-runner:ci -lc 'test "$(id -u)" -ne 0 && command -v bwrap && command -v chromium && command -v prlimit'
       - name: Execute strong sandbox smoke
         # The outer container has no network. Nested Bubblewrap needs seccomp/AppArmor
-        # relaxed plus NET_ADMIN solely to configure loopback in its new network namespace.
-        # The runner stays non-root; privileged mode, mounts, devices, and the host Docker
-        # socket are absent and all other Linux capabilities remain dropped.
-        run: docker run --rm --network=none --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cap-drop=ALL --cap-add=NET_ADMIN --entrypoint node madeproof-runner:ci dist/tests/sandbox/strong-sandbox-smoke.js
+        # relaxed and narrowly scoped namespace-setup capabilities. The application
+        # process remains the non-root `node` user; privileged mode, mounts, devices,
+        # and the host Docker socket are absent.
+        run: docker run --rm --network=none --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cap-drop=ALL --cap-add=SETUID --cap-add=SETGID --cap-add=NET_ADMIN --entrypoint node madeproof-runner:ci dist/tests/sandbox/strong-sandbox-smoke.js
