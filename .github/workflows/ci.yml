@@ -94,6 +94,6 @@ jobs:
           docker run --rm --entrypoint sh madeproof-runner:ci -lc 'test "$(id -u)" -ne 0 && command -v bwrap && command -v chromium && command -v prlimit'
       - name: Execute strong sandbox smoke
         # Nested unprivileged user/mount namespaces need Docker's syscall and
-        # AppArmor filters relaxed, but the runner remains non-root with all
-        # Linux capabilities dropped, no privileged mode, mounts, devices, or Docker socket.
-        run: docker run --rm --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cap-drop=ALL --entrypoint node madeproof-runner:ci dist/tests/sandbox/strong-sandbox-smoke.js
+        # AppArmor filters relaxed. The outer container has no network, the
+        # runner remains non-root, and all Linux capabilities are dropped.
+        run: docker run --rm --network=none --security-opt seccomp=unconfined --security-opt apparmor=unconfined --cap-drop=ALL --entrypoint node madeproof-runner:ci dist/tests/sandbox/strong-sandbox-smoke.js
