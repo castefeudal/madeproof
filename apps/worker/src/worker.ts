@@ -209,7 +209,7 @@ export class VerificationWorker {
       return result(
         check,
         c,
-        x ? 'PASSED' : 'FAILED',
+        m ? 'PASSED' : 'FAILED',
         m
           ? 'Trusted evidence satisfies the expected value.'
           : 'No trusted evidence satisfies the expected value.',
@@ -221,7 +221,7 @@ export class VerificationWorker {
             trustTier: i.trustTier,
           })),
         },
-        m ? [m.id] : e.map((i) => i.id),
+        m ? [m.id] : [],
       );
     }
     return result(

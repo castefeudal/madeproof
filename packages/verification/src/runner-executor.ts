@@ -80,7 +80,7 @@ async function doc(p: RunnerCheckPayload, b: BrowserSession) {
   await b.evaluate(
     `globalThis.__MADEPROOF_DEMO_FIXED__=${Boolean(p.run.metadata?.demoFixed) ? 'true' : 'false'}`,
   );
-  await b.evaluate(`(()=>{${script}\n//# sourceURL=madeproof-demo-target.js})()`);
+  await b.evaluate(`(() => {${script.replace(/^#!/, '//#!')}})();\n//# sourceURL=madeproof-demo-target.js`);
   return { targetUrl: target, transport: 'runner-http-fetch-plus-chromium-document' };
 }
 function ev(

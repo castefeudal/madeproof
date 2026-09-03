@@ -1,4 +1,3 @@
-BEGIN;
 
 CREATE TABLE users (
   id text PRIMARY KEY,
@@ -221,5 +220,3 @@ CREATE POLICY verdicts_workspace_isolation ON verdicts
   USING (workspace_id = current_setting('madeproof.workspace_id', true));
 CREATE POLICY receipts_workspace_isolation ON receipts
   USING (workspace_id = current_setting('madeproof.workspace_id', true));
-
-COMMIT;

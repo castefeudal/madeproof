@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { startTestApplication, waitForServiceVerification } from '../helpers/runtime.js';
 import { VerificationWorker } from '../../apps/worker/src/worker.js';
-import { SqliteDistributedStore } from '../../packages/db/src/sqlite-distributed-store.js';
+import { SqliteStore } from '../../packages/db/src/sqlite-store.js';
 import { EvidenceService } from '../../packages/evidence/src/evidence-service.js';
 
 test('control plane queues verification but cannot execute it without a worker', async () => {
@@ -37,8 +37,8 @@ test('control plane queues verification but cannot execute it without a worker',
 
 test('worker reclaims stale verification lease and completes without duplicate result', async () => {
   const r = await startTestApplication('worker-recovery'),
-    crashed = new SqliteDistributedStore(r.dataDir),
-    recovery = new SqliteDistributedStore(r.dataDir);
+    crashed = new SqliteStore(r.dataDir),
+    recovery = new SqliteStore(r.dataDir);
   try {
     crashed.migrate();
     recovery.migrate();

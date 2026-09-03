@@ -17,7 +17,7 @@
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
     "dev": "npm run build && NODE_ENV=development node dist/apps/api/src/main.js",
     "start": "node dist/apps/api/src/main.js",
-    "worker": "node dist/apps/runner/src/main.js",
+    "worker": "node dist/apps/runner/src/agent-main.js",
     "mcp": "node dist/apps/mcp/src/main.js",
     "cli": "node dist/apps/cli/src/main.js",
     "lint": "node scripts/lint.mjs",
@@ -31,10 +31,15 @@
     "test": "npm run test:unit && npm run test:integration && npm run test:security && npm run test:e2e",
     "verify": "npm run lint && npm run format:check && npm run typecheck && npm run test && npm run test:browser",
     "db:migrate": "npm run build && node dist/apps/api/src/migrate.js",
-    "db:seed": "npm run build && node dist/apps/api/src/seed.js"
+    "db:seed": "npm run build && node dist/apps/api/src/seed.js",
+    "test:worker": "npm run build && node --test dist/tests/integration/worker-runner.test.js",
+    "test:postgres": "npm run build && node dist/tests/postgres/postgres-smoke.js",
+    "test:sandbox": "npm run build && node dist/tests/sandbox/strong-sandbox-smoke.js",
+    "runner": "node dist/apps/runner/src/agent-main.js"
   },
   "devDependencies": {
     "@types/node": "^26.4.1",
+    "@types/pg": "^8.23.1",
     "prettier": "^3.9.6",
     "typescript": "^7.0.2"
   },

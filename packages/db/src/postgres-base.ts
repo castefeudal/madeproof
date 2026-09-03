@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { findMigrationsDir } from './migrations.js';
 import { newId } from '../../shared/src/ids.js';
 import { MadeProofError } from '../../shared/src/errors.js';
 function slugify(v: string) {
@@ -68,7 +69,7 @@ export class PostgresStoreBase {
       await c.query(
         'CREATE TABLE IF NOT EXISTS schema_migrations(version text PRIMARY KEY,applied_at timestamptz NOT NULL DEFAULT now())',
       );
-      const d = path.resolve('packages/db/migrations/postgres');
+      const d = findMigrationsDir('postgres');
       for (const n of fs
         .readdirSync(d)
         .filter((x: string) => x.endsWith('.sql'))

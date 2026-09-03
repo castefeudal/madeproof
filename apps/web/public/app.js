@@ -171,7 +171,17 @@ async function renderRun(runId) {
     api(`/runs/${runId}/verification`),
     api(`/runs/${runId}/receipt`).catch(() => null)
   ]);
-  const verdict = verification.verdict.machine_verdict;
+  const jobActive = verification.job && !['COMPLETED', 'FAILED', 'CANCELLED'].includes(verification.job.status);
+  if (jobActive && !verification.verdict) {
+    const attempt = Number(verification.job.attempt || run.attempt || 1);
+    routeView.innerHTML = `
+      <header class="page-head"><div><p class="eyebrow">RUN ${attempt}</p><h1>Outcome verification</h1><p class="muted">${escapeHtml(run.artifact_ref || 'No artifact reference')}</p></div><button class="secondary" id="back-dashboard">Dashboard</button></header>
+      <section class="result-hero"><span class="pill reviewing">VERIFYING</span><h1>Verification in progress</h1><p>Independent checks are queued or running. This page updates automatically.</p></section>`;
+    document.querySelector('#back-dashboard').addEventListener('click', () => navigate('/app'));
+    setTimeout(() => { if (location.pathname === `/runs/${runId}`) renderRun(runId); }, 1000);
+    return;
+  }
+  const verdict = verification.verdict ? verification.verdict.machine_verdict : 'INCONCLUSIVE';
   const results = verification.results;
   const failed = results.filter(item => item.status !== 'PASSED');
   const passed = results.filter(item => item.status === 'PASSED');

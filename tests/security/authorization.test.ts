@@ -16,35 +16,30 @@ test('workspace scoping prevents IDOR even when another task ID is known', async
     };
     const otherUserId = newId('usr');
     const otherWorkspaceId = newId('wsp');
-    const now = nowIso();
-    service.store.db
-      .prepare('INSERT INTO users(id,email,password_hash,created_at) VALUES(?,?,?,?)')
-      .run(otherUserId, 'other@example.test', hashPassword('another safe password'), now);
-    service.store.db
-      .prepare('INSERT INTO workspaces(id,name,created_at) VALUES(?,?,?)')
-      .run(otherWorkspaceId, 'Other workspace', now);
-    service.store.db
-      .prepare(
-        'INSERT INTO workspace_members(workspace_id,user_id,role,created_at) VALUES(?,?,?,?)',
-      )
-      .run(otherWorkspaceId, otherUserId, 'OWNER', now);
+    await service.store.createUserForTest!({
+      id: otherUserId,
+      email: 'other@example.test',
+      passwordHash: hashPassword('another safe password'),
+      workspaceId: otherWorkspaceId,
+      workspaceName: 'Other workspace',
+    });
     const other = {
       id: otherUserId,
       workspaceId: otherWorkspaceId,
       type: 'USER' as const,
       scopes: ['*'],
     };
-    const otherProject = service.createProject(other, { name: 'Private project' });
-    const otherTask = service.createTask(other, {
+    const otherProject = await service.createProject(other, { name: 'Private project' });
+    const otherTask = await service.createTask(other, {
       projectId: otherProject.id,
       title: 'Private task',
       intent: 'Remain private',
     });
-    assert.throws(
+    await assert.rejects(
       () => service.getTask(owner, otherTask.id),
       (error: any) => error.code === 'TASK_NOT_FOUND' && error.status === 404,
     );
-    assert.throws(
+    await assert.rejects(
       () => service.getProject(owner, otherProject.id),
       (error: any) => error.code === 'PROJECT_NOT_FOUND' && error.status === 404,
     );
@@ -63,15 +58,15 @@ test('API key scopes and revocation are enforced', async () => {
       type: 'USER' as const,
       scopes: ['*'],
     };
-    const created = service.createApiKey(owner, { name: 'read only', scopes: ['tasks:read'] });
-    const keyActor = service.authenticateApiKey(created.secret);
-    assert.throws(
-      () => service.createProject(keyActor, { name: 'Forbidden' }),
+    const created = await service.createApiKey(owner, { name: 'read only', scopes: ['tasks:read'] });
+    const keyActor = await service.authenticateApiKey(created.secret);
+    await assert.rejects(
+      async () => service.createProject(keyActor, { name: 'Forbidden' }),
       (error: any) => error.code === 'INSUFFICIENT_SCOPE',
     );
-    assert.equal(service.revokeApiKey(owner, created.key.id), true);
-    assert.throws(
-      () => service.authenticateApiKey(created.secret),
+    assert.equal(await service.revokeApiKey(owner, created.key.id), true);
+    await assert.rejects(
+      async () => service.authenticateApiKey(created.secret),
       (error: any) => error.code === 'AUTH_REQUIRED',
     );
   } finally {
@@ -104,9 +99,7 @@ test('expired session is rejected', async () => {
   const runtime = await startTestApplication('expired-session');
   try {
     const auth = await login(runtime.url);
-    runtime.app.service.store.db
-      .prepare("UPDATE sessions SET expires_at='2000-01-01T00:00:00.000Z'")
-      .run();
+    await runtime.app.service.store.expireAllSessionsForTest!();
     const response = await api<any>(runtime.url, auth, 'GET', '/dashboard');
     assert.equal(response.status, 401);
     assert.equal(response.body.error.code, 'AUTH_REQUIRED');

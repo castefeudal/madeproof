@@ -1,0 +1,106 @@
+# MADEPROOF production-like local stack.
+#
+#   cp .env.example .env   # then set DATABASE_KIND=postgres and strong secrets
+#   docker compose -f infra/docker/compose.yml up -d --build
+#
+# Topology (process boundaries preserved):
+#
+#   PostgreSQL  <----  API/Web  <----  Worker
+#       ^                 ^               |
+#       |                 |               v (creates runner jobs)
+#       +----- migrations +          Runner (outbound poll only,
+#                                     no DB credential, no docker socket)
+#
+# The runner container is NOT given DATABASE_URL. It polls the control plane
+# over HTTPS with a workspace-bound credential and executes checks inside
+# Bubblewrap with network disabled.
+
+services:
+  postgres:
+    image: postgres:17-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-madeproof}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-madeproof}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-madeproof} -d ${POSTGRES_DB:-madeproof}']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.app
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3210
+      DATABASE_KIND: postgres
+      DATABASE_URL: postgresql://${POSTGRES_USER:-madeproof}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-madeproof}
+      MADEPROOF_ADMIN_EMAIL: ${MADEPROOF_ADMIN_EMAIL:?set MADEPROOF_ADMIN_EMAIL in .env}
+      MADEPROOF_ADMIN_PASSWORD: ${MADEPROOF_ADMIN_PASSWORD:?set MADEPROOF_ADMIN_PASSWORD in .env}
+      SESSION_SECRET: ${SESSION_SECRET:?set SESSION_SECRET (>=32 random chars) in .env}
+      ENCRYPTION_KEY: ${ENCRYPTION_KEY:?set ENCRYPTION_KEY (32-byte base64) in .env}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://127.0.0.1:3210}
+      MADEPROOF_DATA_DIR: /data
+    volumes:
+      - evidence:/data
+    ports:
+      - '${PORT:-3210}:3210'
+
+  worker:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_KIND: postgres
+      DATABASE_URL: postgresql://${POSTGRES_USER:-madeproof}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-madeproof}
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://api:3210}
+      MADEPROOF_DATA_DIR: /data
+    volumes:
+      - evidence:/data
+    # Scale workers with: docker compose up -d --scale worker=3
+
+volumes:
+  pgdata:
+  evidence:
+
+  # Runner: outbound-only execution boundary. No DATABASE_URL, no docker socket.
+  # Register a runner credential in the UI/API first, then set it here.
+  #   POST /api/v1/runners {"name":"prod","version":"0.1.0","capabilities":["command","browser"]}
+  #   MADEPROOF_RUNNER_CREDENTIAL='mpr_...' docker compose up -d runner
+  runner:
+    build:
+      context: ../..
+      dockerfile: infra/docker/Dockerfile.runner
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      NODE_ENV: production
+      MADEPROOF_BASE_URL: http://api:3210
+      MADEPROOF_RUNNER_BASE_URL: ${MADEPROOF_RUNNER_BASE_URL:-http://api:3210}
+      # One-time registration secret (mpr_...). Consumed on first poll; a
+      # stale value simply fails to poll until a fresh credential is set.
+      MADEPROOF_RUNNER_CREDENTIAL: ${MADEPROOF_RUNNER_CREDENTIAL:-}
+      # Read-only roots the runner may execute from (path-escaped,
+      # symlink-checked). Keep as narrow as the checks require.
+      MADEPROOF_RUNNER_ROOTS: ${MADEPROOF_RUNNER_ROOTS:-/srv/repos/project}
+      # Bubblewrap keeps the network namespace disabled inside the sandbox.
+      # Checks that need egress must explicitly set MADEPROOF_RUNNER_NETWORK_DISABLED=0.
+      MADEPROOF_RUNNER_NETWORK_DISABLED: ${MADEPROOF_RUNNER_NETWORK_DISABLED:-1}
+    # No inbound port: the runner polls outbound only.

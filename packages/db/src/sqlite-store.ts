@@ -12,7 +12,14 @@ import type {
   VerificationResult,
   VerdictDecision,
 } from '../../domain/src/types.js';
+import type {
+  RunnerJobInput,
+  RunnerRegistrationInput,
+  VerificationJobInput,
+  VerificationJobStatus,
+} from './store.js';
 import { assertTaskTransition } from '../../domain/src/state-machine.js';
+import { findMigrationsDir } from './migrations.js';
 
 const { DatabaseSync } = sqlite as any;
 
@@ -32,6 +39,12 @@ function slugify(value: string): string {
   );
 }
 
+function parseJsonColumn<T>(value: unknown, fallback: T): T {
+  if (value == null) return fallback;
+  if (typeof value === 'string') return JSON.parse(value) as T;
+  return value as T;
+}
+
 export class SqliteStore {
   readonly db: any;
   readonly dataDir: string;
@@ -44,15 +57,46 @@ export class SqliteStore {
   }
 
   migrate(): void {
-    const migration = fs.readFileSync(
-      path.resolve('packages/db/migrations/sqlite/0001_init.sql'),
-      'utf8',
-    );
-    this.db.exec(migration);
+    for (const file of ['0001_init.sql', '0002_worker_runner.sql']) {
+      const path = `${findMigrationsDir('sqlite')}/${file}`;
+      this.db.exec(fs.readFileSync(path, 'utf8'));
+    }
   }
 
   close(): void {
     this.db.close();
+  }
+
+  ping(): boolean {
+    this.db.prepare('SELECT 1 AS ok').get();
+    return true;
+  }
+
+  createUserForTest(input: {
+    id: string;
+    email: string;
+    passwordHash: string;
+    workspaceId: string;
+    workspaceName: string;
+  }): void {
+    this.transaction(() => {
+      const now = nowIso();
+      this.db
+        .prepare('INSERT INTO users(id,email,password_hash,created_at) VALUES(?,?,?,?)')
+        .run(input.id, input.email, input.passwordHash, now);
+      this.db
+        .prepare('INSERT INTO workspaces(id,name,created_at) VALUES(?,?,?)')
+        .run(input.workspaceId, input.workspaceName, now);
+      this.db
+        .prepare(
+          'INSERT INTO workspace_members(workspace_id,user_id,role,created_at) VALUES(?,?,?,?)',
+        )
+        .run(input.workspaceId, input.id, 'OWNER', now);
+    });
+  }
+
+  expireAllSessionsForTest(): void {
+    this.db.prepare("UPDATE sessions SET expires_at='2000-01-01T00:00:00.000Z'").run();
   }
 
   transaction<T>(fn: () => T): T {
@@ -715,7 +759,7 @@ export class SqliteStore {
     const row = this.db
       .prepare('SELECT * FROM verdicts WHERE run_id=? AND workspace_id=?')
       .get(runId, workspaceId) as any;
-    if (!row) throw new MadeProofError('VERDICT_NOT_READY', 'Verdict is not available yet', 404);
+    if (!row) return null;
     return { ...row, decision: parseJson(row.decision_json, {}) };
   }
 
@@ -850,5 +894,348 @@ export class SqliteStore {
       running: (map.IN_PROGRESS ?? 0) + (map.AWAITING_EVIDENCE ?? 0) + (map.VERIFYING ?? 0),
       verified: map.VERIFIED ?? 0,
     };
+  }
+
+  registerRunner(i: RunnerRegistrationInput) {
+    const id = newId('rnr'),
+      at = nowIso();
+    this.db
+      .prepare(
+        'INSERT INTO runner_registrations(id,workspace_id,name,credential_hash,version,capabilities_json,created_at) VALUES(?,?,?,?,?,?,?)',
+      )
+      .run(
+        id,
+        i.workspaceId,
+        i.name,
+        i.credentialHash,
+        i.version,
+        JSON.stringify(i.capabilities),
+        at,
+      );
+    return {
+      id,
+      workspace_id: i.workspaceId,
+      name: i.name,
+      version: i.version,
+      capabilities: i.capabilities,
+      created_at: at,
+      last_heartbeat_at: null,
+      revoked_at: null,
+    };
+  }
+  listRunners(w: string) {
+    return (
+      this.db
+        .prepare(
+          'SELECT id,workspace_id,name,version,capabilities_json,last_heartbeat_at,revoked_at,created_at FROM runner_registrations WHERE workspace_id=? ORDER BY created_at DESC',
+        )
+        .all(w) as any[]
+    ).map((r) => ({ ...r, capabilities: parseJsonColumn<string[]>(r.capabilities_json, []) }));
+  }
+  getRunnerByCredentialHash(h: string) {
+    const r = this.db
+      .prepare('SELECT * FROM runner_registrations WHERE credential_hash=? AND revoked_at IS NULL')
+      .get(h) as any;
+    return r ? { ...r, capabilities: parseJsonColumn<string[]>(r.capabilities_json, []) } : null;
+  }
+  revokeRunner(w: string, id: string) {
+    const n = nowIso(),
+      r = this.db
+        .prepare(
+          'UPDATE runner_registrations SET revoked_at=? WHERE id=? AND workspace_id=? AND revoked_at IS NULL',
+        )
+        .run(n, id, w);
+    this.db
+      .prepare(
+        "UPDATE runner_jobs SET status='CANCELLED',updated_at=?,lease_token_hash=NULL,lease_expires_at=NULL WHERE runner_id=? AND workspace_id=? AND status IN ('LEASED','RUNNING')",
+      )
+      .run(n, id, w);
+    return r.changes === 1;
+  }
+  heartbeatRunner(w: string, id: string, v: string, c: string[]) {
+    const r = this.db
+      .prepare(
+        'UPDATE runner_registrations SET last_heartbeat_at=?,version=?,capabilities_json=? WHERE id=? AND workspace_id=? AND revoked_at IS NULL',
+      )
+      .run(nowIso(), v, JSON.stringify(c), id, w);
+    if (r.changes !== 1)
+      throw new MadeProofError('RUNNER_REVOKED', 'Runner credential is revoked or invalid', 401);
+  }
+  enqueueVerificationJob(i: VerificationJobInput) {
+    const e = this.db
+      .prepare('SELECT * FROM verification_jobs WHERE workspace_id=? AND run_id=?')
+      .get(i.workspaceId, i.runId) as any;
+    if (e) return e;
+    const id = newId('vjob'),
+      n = nowIso();
+    this.db
+      .prepare(
+        'INSERT INTO verification_jobs(id,workspace_id,run_id,actor_id,status,attempt,max_attempts,available_at,request_key,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',
+      )
+      .run(
+        id,
+        i.workspaceId,
+        i.runId,
+        i.actorId,
+        'QUEUED',
+        0,
+        i.maxAttempts ?? 5,
+        n,
+        i.requestKey ?? null,
+        n,
+        n,
+      );
+    return this.db.prepare('SELECT * FROM verification_jobs WHERE id=?').get(id);
+  }
+  getVerificationJob(w: string, r: string) {
+    return (
+      (this.db
+        .prepare('SELECT * FROM verification_jobs WHERE workspace_id=? AND run_id=?')
+        .get(w, r) as any) ?? null
+    );
+  }
+  claimVerificationJob(workerId: string, leaseSeconds: number) {
+    const n = nowIso(),
+      x = new Date(Date.now() + leaseSeconds * 1000).toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const r = this.db
+        .prepare(
+          "SELECT * FROM verification_jobs WHERE ((status='QUEUED' AND available_at<=?) OR (status IN ('CLAIMED','RUNNING','WAITING_RUNNER') AND claim_expires_at IS NOT NULL AND claim_expires_at<?)) AND attempt<max_attempts ORDER BY created_at LIMIT 1",
+        )
+        .get(n, n) as any;
+      if (!r) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      this.db
+        .prepare(
+          "UPDATE verification_jobs SET status='CLAIMED',claimed_by=?,claim_expires_at=?,last_heartbeat_at=?,attempt=attempt+1,updated_at=? WHERE id=?",
+        )
+        .run(workerId, x, n, n, r.id);
+      const o = this.db.prepare('SELECT * FROM verification_jobs WHERE id=?').get(r.id);
+      this.db.exec('COMMIT');
+      return o;
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+  heartbeatVerificationJob(
+    id: string,
+    w: string,
+    s: number,
+    status: VerificationJobStatus = 'RUNNING',
+  ) {
+    const n = nowIso(),
+      x = new Date(Date.now() + s * 1000).toISOString();
+    return (
+      this.db
+        .prepare(
+          "UPDATE verification_jobs SET status=?,claim_expires_at=?,last_heartbeat_at=?,updated_at=? WHERE id=? AND claimed_by=? AND status NOT IN ('COMPLETED','FAILED','CANCELLED')",
+        )
+        .run(status, x, n, n, id, w).changes === 1
+    );
+  }
+  completeVerificationJob(id: string, w: string) {
+    const r = this.db
+      .prepare(
+        "UPDATE verification_jobs SET status='COMPLETED',claim_expires_at=NULL,last_heartbeat_at=?,updated_at=? WHERE id=? AND claimed_by=?",
+      )
+      .run(nowIso(), nowIso(), id, w);
+    if (r.changes !== 1)
+      throw new MadeProofError(
+        'JOB_LEASE_LOST',
+        'Verification job lease is no longer owned by this worker',
+        409,
+      );
+  }
+  failVerificationJob(id: string, w: string, i: any) {
+    const r = this.db
+      .prepare('SELECT attempt,max_attempts FROM verification_jobs WHERE id=? AND claimed_by=?')
+      .get(id, w) as any;
+    if (!r)
+      throw new MadeProofError(
+        'JOB_LEASE_LOST',
+        'Verification job lease is no longer owned by this worker',
+        409,
+      );
+    const retry = i.retryable && Number(r.attempt) < Number(r.max_attempts),
+      a = new Date(
+        Date.now() + (i.backoffSeconds ?? Math.min(60, 2 ** Number(r.attempt))) * 1000,
+      ).toISOString();
+    this.db
+      .prepare(
+        'UPDATE verification_jobs SET status=?,available_at=?,claimed_by=NULL,claim_expires_at=NULL,error_code=?,error_message=?,updated_at=? WHERE id=?',
+      )
+      .run(retry ? 'QUEUED' : 'FAILED', a, i.code, i.message.slice(0, 2000), nowIso(), id);
+  }
+  cancelVerificationJob(w: string, r: string) {
+    const x = this.db
+      .prepare('SELECT id FROM verification_jobs WHERE workspace_id=? AND run_id=?')
+      .get(w, r) as any;
+    if (!x) return false;
+    const y = this.db
+      .prepare(
+        "UPDATE verification_jobs SET status='CANCELLED',claim_expires_at=NULL,updated_at=? WHERE id=? AND status NOT IN ('COMPLETED','FAILED','CANCELLED')",
+      )
+      .run(nowIso(), x.id);
+    this.cancelRunnerJobsForVerification(x.id);
+    return y.changes === 1;
+  }
+  createOrGetRunnerJob(i: RunnerJobInput) {
+    const e = this.db
+      .prepare('SELECT id FROM runner_jobs WHERE verification_job_id=? AND criterion_id=?')
+      .get(i.verificationJobId, i.criterionId) as any;
+    if (e) return this.getRunnerJob(e.id);
+    const id = newId('rjob'),
+      n = nowIso();
+    this.db
+      .prepare(
+        "INSERT INTO runner_jobs(id,workspace_id,verification_job_id,run_id,check_id,criterion_id,type,required_capability,payload_json,status,attempt,max_attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,'QUEUED',?,?,?,?,?)",
+      )
+      .run(
+        id,
+        i.workspaceId,
+        i.verificationJobId,
+        i.runId,
+        i.checkId,
+        i.criterionId,
+        i.type,
+        i.requiredCapability ?? null,
+        JSON.stringify(i.payload),
+        0,
+        i.maxAttempts ?? 3,
+        n,
+        n,
+        n,
+      );
+    return this.getRunnerJob(id);
+  }
+  getRunnerJob(id: string) {
+    const r = this.db.prepare('SELECT * FROM runner_jobs WHERE id=?').get(id) as any;
+    return r
+      ? {
+          ...r,
+          payload: parseJsonColumn(r.payload_json, {} as Record<string, unknown>),
+          result: parseJsonColumn(r.result_json, null),
+          error: parseJsonColumn(r.error_json, null),
+        }
+      : null;
+  }
+  getRunnerJobForCriterion(v: string, c: string) {
+    const r = this.db
+      .prepare('SELECT id FROM runner_jobs WHERE verification_job_id=? AND criterion_id=?')
+      .get(v, c) as any;
+    return r ? this.getRunnerJob(r.id) : null;
+  }
+  claimRunnerJob(i: any) {
+    this.recoverExpiredRunnerJobs();
+    const n = nowIso(),
+      x = new Date(Date.now() + i.leaseSeconds * 1000).toISOString();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const rows = this.db
+          .prepare(
+            "SELECT * FROM runner_jobs WHERE workspace_id=? AND status='QUEUED' AND available_at<=? AND attempt<max_attempts ORDER BY created_at LIMIT 25",
+          )
+          .all(i.workspaceId, n) as any[],
+        caps = new Set(i.capabilities),
+        r = rows.find((z) => !z.required_capability || caps.has(z.required_capability));
+      if (!r) {
+        this.db.exec('COMMIT');
+        return null;
+      }
+      const y = this.db
+          .prepare(
+            "UPDATE runner_jobs SET status='LEASED',runner_id=?,lease_token_hash=?,lease_expires_at=?,attempt=attempt+1,updated_at=? WHERE id=? AND status='QUEUED'",
+          )
+          .run(i.runnerId, i.leaseTokenHash, x, n, r.id),
+        o = y.changes === 1 ? this.getRunnerJob(r.id) : null;
+      this.db.exec('COMMIT');
+      return o;
+    } catch (e) {
+      this.db.exec('ROLLBACK');
+      throw e;
+    }
+  }
+  markRunnerJobRunning(i: any) {
+    const x = new Date(Date.now() + i.leaseSeconds * 1000).toISOString(),
+      r = this.db
+        .prepare(
+          "UPDATE runner_jobs SET status='RUNNING',lease_expires_at=?,updated_at=? WHERE id=? AND workspace_id=? AND runner_id=? AND lease_token_hash=? AND status='LEASED' AND lease_expires_at>?",
+        )
+        .run(x, nowIso(), i.jobId, i.workspaceId, i.runnerId, i.leaseTokenHash, nowIso());
+    if (r.changes !== 1)
+      throw new MadeProofError(
+        'RUNNER_JOB_TOKEN_INVALID',
+        'Runner job lease is invalid, expired or already consumed',
+        409,
+      );
+    return this.getRunnerJob(i.jobId);
+  }
+  completeRunnerJob(i: any) {
+    const r = this.db
+      .prepare(
+        "UPDATE runner_jobs SET status='COMPLETED',result_json=?,error_json=NULL,lease_token_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE id=? AND workspace_id=? AND runner_id=? AND lease_token_hash=? AND status IN ('LEASED','RUNNING') AND lease_expires_at>?",
+      )
+      .run(
+        JSON.stringify(i.result),
+        nowIso(),
+        i.jobId,
+        i.workspaceId,
+        i.runnerId,
+        i.leaseTokenHash,
+        nowIso(),
+      );
+    if (r.changes !== 1)
+      throw new MadeProofError(
+        'RUNNER_JOB_TOKEN_INVALID',
+        'Runner job lease is invalid, expired or already consumed',
+        409,
+      );
+    return this.getRunnerJob(i.jobId);
+  }
+  failRunnerJob(i: any) {
+    const r = this.db
+      .prepare(
+        "SELECT attempt,max_attempts FROM runner_jobs WHERE id=? AND workspace_id=? AND runner_id=? AND lease_token_hash=? AND status IN ('LEASED','RUNNING') AND lease_expires_at>?",
+      )
+      .get(i.jobId, i.workspaceId, i.runnerId, i.leaseTokenHash, nowIso()) as any;
+    if (!r)
+      throw new MadeProofError(
+        'RUNNER_JOB_TOKEN_INVALID',
+        'Runner job lease is invalid, expired or already consumed',
+        409,
+      );
+    const retry = i.retryable && Number(r.attempt) < Number(r.max_attempts),
+      a = new Date(
+        Date.now() + (i.backoffSeconds ?? Math.min(60, 2 ** Number(r.attempt))) * 1000,
+      ).toISOString();
+    this.db
+      .prepare(
+        'UPDATE runner_jobs SET status=?,available_at=?,runner_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL,error_json=?,updated_at=? WHERE id=?',
+      )
+      .run(retry ? 'QUEUED' : 'FAILED', a, JSON.stringify(i.error), nowIso(), i.jobId);
+    return this.getRunnerJob(i.jobId);
+  }
+  recoverExpiredRunnerJobs() {
+    const n = nowIso();
+    return Number(
+      this.db
+        .prepare(
+          "UPDATE runner_jobs SET status=CASE WHEN attempt<max_attempts THEN 'QUEUED' ELSE 'TIMED_OUT' END,runner_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL,available_at=?,updated_at=? WHERE status IN ('LEASED','RUNNING') AND lease_expires_at IS NOT NULL AND lease_expires_at<?",
+        )
+        .run(n, n, n).changes ?? 0,
+    );
+  }
+  cancelRunnerJobsForVerification(id: string) {
+    return Number(
+      this.db
+        .prepare(
+          "UPDATE runner_jobs SET status='CANCELLED',lease_token_hash=NULL,lease_expires_at=NULL,updated_at=? WHERE verification_job_id=? AND status NOT IN ('COMPLETED','FAILED','CANCELLED','TIMED_OUT')",
+        )
+        .run(nowIso(), id).changes ?? 0,
+    );
   }
 }

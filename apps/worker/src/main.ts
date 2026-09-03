@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { loadConfig } from '../../../packages/config/src/runtime.js';
-import { SqliteDistributedStore } from '../../../packages/db/src/sqlite-distributed-store.js';
+import { SqliteStore } from '../../../packages/db/src/sqlite-store.js';
 import { PostgresStore } from '../../../packages/db/src/postgres-store.js';
 import type { MadeProofStore } from '../../../packages/db/src/store.js';
 import { EvidenceService } from '../../../packages/evidence/src/evidence-service.js';
@@ -10,7 +10,7 @@ const config = loadConfig();
 const store: MadeProofStore =
   config.databaseKind === 'postgres'
     ? new PostgresStore(config.databaseUrl!)
-    : new SqliteDistributedStore(config.dataDir);
+    : new SqliteStore(config.dataDir);
 await store.migrate();
 const worker = new VerificationWorker(store, new EvidenceService(config.dataDir), {
   baseUrl: config.publicBaseUrl,

@@ -1,10 +1,8 @@
 import { generateOutcomeContract } from '../../domain/src/contract-generator.js';
 import { assertTaskTransition } from '../../domain/src/state-machine.js';
 import type { AcceptanceCriterion, OutcomeContract } from '../../domain/src/types.js';
-import type { SqliteStore } from '../../db/src/sqlite-store.js';
+import type { MadeProofStore } from '../../db/src/store.js';
 import type { EvidenceService } from '../../evidence/src/evidence-service.js';
-import type { VerificationEngine } from '../../verification/src/engine.js';
-import type { SafeCommandRunner } from '../../../apps/runner/src/command-runner.js';
 import type { RuntimeConfig } from '../../config/src/runtime.js';
 import { canonicalJson, sha256 } from '../../shared/src/canonical.js';
 import { MadeProofError } from '../../shared/src/errors.js';
@@ -14,49 +12,75 @@ import { hashPassword, hashToken, randomToken, verifyPassword } from '../../secu
 export interface Actor {
   id: string;
   workspaceId: string;
-  type: 'USER' | 'API_KEY' | 'MCP' | 'GITHUB' | 'SYSTEM';
+  type: 'USER' | 'API_KEY' | 'MCP' | 'GITHUB' | 'RUNNER' | 'SYSTEM';
   scopes: string[];
   email?: string;
 }
 
+export interface RunnerActor extends Actor {
+  runnerId: string;
+  capabilities: string[];
+  version: string;
+}
+
+export const RUNNER_CAPABILITIES = [
+  'command',
+  'build',
+  'test_suite',
+  'browser',
+  'accessibility',
+  'file',
+  'http',
+] as const;
+
+export function isCompatibleRunnerVersion(version: string): boolean {
+  return /^0\.1\.\d+$/.test(version);
+}
+
 export class MadeProofService {
-  readonly owner: { userId: string; workspaceId: string };
+  owner: { userId: string; workspaceId: string };
 
   constructor(
-    readonly store: SqliteStore,
+    readonly store: MadeProofStore,
     readonly evidenceService: EvidenceService,
-    readonly engine: VerificationEngine,
-    readonly commandRunner: SafeCommandRunner,
     readonly config: RuntimeConfig,
     readonly projectRoot: string,
   ) {
-    store.migrate();
-    this.owner = store.bootstrapOwner(config.adminEmail, hashPassword(config.adminPassword));
+    this.owner = { userId: '', workspaceId: '' };
   }
 
-  login(
+  /** Runs migrations and creates/loads the owner account. Async because PostgreSQL migrations are asynchronous. */
+  async initialize(): Promise<void> {
+    await this.store.migrate();
+    this.owner = await this.store.bootstrapOwner(
+      this.config.adminEmail,
+      hashPassword(this.config.adminPassword),
+    );
+  }
+
+  async login(
     email: string,
     password: string,
-  ): { token: string; csrfToken: string; expiresAt: string; user: any; workspace: any } {
-    const user = this.store.getUserByEmail(email.toLowerCase());
+  ): Promise<{ token: string; csrfToken: string; expiresAt: string; user: any; workspace: any }> {
+    const user = await this.store.getUserByEmail(email.toLowerCase());
     if (!user || !verifyPassword(password, user.password_hash))
       throw new MadeProofError('AUTH_INVALID', 'Email or password is incorrect', 401);
     const token = randomToken();
     const csrfToken = randomToken(24);
     const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString();
-    this.store.createSession(user.id, hashToken(token), csrfToken, expiresAt);
-    const workspace = this.store.getDefaultWorkspaceForUser(user.id);
+    await this.store.createSession(user.id, hashToken(token), csrfToken, expiresAt);
+    const workspace = await this.store.getDefaultWorkspaceForUser(user.id);
     return { token, csrfToken, expiresAt, user: { id: user.id, email: user.email }, workspace };
   }
 
-  logout(token: string): void {
-    this.store.revokeSession(hashToken(token));
+  async logout(token: string): Promise<void> {
+    await this.store.revokeSession(hashToken(token));
   }
 
-  authenticateSession(token: string): Actor {
-    const session = this.store.getSession(hashToken(token));
+  async authenticateSession(token: string): Promise<Actor> {
+    const session = await this.store.getSession(hashToken(token));
     if (!session) throw new MadeProofError('AUTH_REQUIRED', 'Session is invalid or expired', 401);
-    const workspace = this.store.getDefaultWorkspaceForUser(session.user_id);
+    const workspace = await this.store.getDefaultWorkspaceForUser(session.user_id);
     if (!workspace)
       throw new MadeProofError('WORKSPACE_REQUIRED', 'User has no accessible workspace', 403);
     return {
@@ -68,8 +92,8 @@ export class MadeProofService {
     };
   }
 
-  authenticateApiKey(token: string, requiredScope?: string): Actor {
-    const key = this.store.getApiKey(hashToken(token));
+  async authenticateApiKey(token: string, requiredScope?: string): Promise<Actor> {
+    const key = await this.store.getApiKey(hashToken(token));
     if (!key)
       throw new MadeProofError('AUTH_REQUIRED', 'API key is invalid, expired or revoked', 401);
     if (requiredScope && !key.scopes.includes(requiredScope) && !key.scopes.includes('*')) {
@@ -82,10 +106,10 @@ export class MadeProofService {
     return { id: key.id, workspaceId: key.workspace_id, type: 'API_KEY', scopes: key.scopes };
   }
 
-  createApiKey(
+  async createApiKey(
     actor: Actor,
     input: { name: string; scopes: string[]; expiresAt?: string },
-  ): { secret: string; key: any } {
+  ): Promise<{ secret: string; key: any }> {
     this.requireUser(actor);
     const allowed = new Set([
       'tasks:read',
@@ -101,7 +125,7 @@ export class MadeProofService {
       throw new MadeProofError('VALIDATION_ERROR', 'One or more API key scopes are invalid', 422);
     const secret = `mp_${randomToken(32)}`;
     const prefix = secret.slice(0, 12);
-    const key = this.store.createApiKey({
+    const key = await this.store.createApiKey({
       workspaceId: actor.workspaceId,
       userId: actor.id,
       name: input.name,
@@ -110,7 +134,7 @@ export class MadeProofService {
       scopes,
       expiresAt: input.expiresAt,
     });
-    this.audit(actor, 'api_key.created', 'api_key', key.id, undefined, {
+    await this.audit(actor, 'api_key.created', 'api_key', key.id, undefined, {
       name: input.name,
       scopes,
     });
@@ -127,68 +151,188 @@ export class MadeProofService {
     };
   }
 
-  listApiKeys(actor: Actor): any[] {
+  async listApiKeys(actor: Actor): Promise<any[]> {
     this.requireUser(actor);
     return this.store.listApiKeys(actor.workspaceId);
   }
 
-  revokeApiKey(actor: Actor, keyId: string): boolean {
+  async revokeApiKey(actor: Actor, keyId: string): Promise<boolean> {
     this.requireUser(actor);
-    const revoked = this.store.revokeApiKey(actor.workspaceId, keyId);
-    if (revoked) this.audit(actor, 'api_key.revoked', 'api_key', keyId);
+    const revoked = await this.store.revokeApiKey(actor.workspaceId, keyId);
+    if (revoked) await this.audit(actor, 'api_key.revoked', 'api_key', keyId);
     return revoked;
   }
 
-  createProject(
+  // ---------------------------------------------------------------- runners
+
+  async createRunner(
+    actor: Actor,
+    input: { name: string; version: string; capabilities: string[] },
+  ): Promise<{ runner: any; secret: string }> {
+    this.requireUser(actor);
+    if (!input.name || input.name.length > 100)
+      throw new MadeProofError('VALIDATION_ERROR', 'Runner name must be 1-100 characters', 422);
+    if (!isCompatibleRunnerVersion(input.version))
+      throw new MadeProofError(
+        'RUNNER_VERSION_INCOMPATIBLE',
+        'Runner protocol version must match 0.1.x',
+        400,
+      );
+    const capabilities = [...new Set(input.capabilities)];
+    if (
+      !capabilities.length ||
+      capabilities.some(
+        (capability) => !(RUNNER_CAPABILITIES as readonly string[]).includes(capability),
+      )
+    )
+      throw new MadeProofError(
+        'VALIDATION_ERROR',
+        `Runner capabilities must be a non-empty subset of: ${RUNNER_CAPABILITIES.join(', ')}`,
+        422,
+      );
+    const secret = `mpr_${randomToken(32)}`;
+    const runner = await this.store.registerRunner({
+      workspaceId: actor.workspaceId,
+      name: input.name,
+      credentialHash: hashToken(secret),
+      version: input.version,
+      capabilities,
+    });
+    await this.audit(actor, 'runner.registered', 'runner', runner.id, undefined, {
+      name: input.name,
+      capabilities,
+    });
+    return {
+      runner: this.publicRunner(runner),
+      secret,
+    };
+  }
+
+  async listRunners(actor: Actor): Promise<any[]> {
+    this.requireUser(actor);
+    const runners = await this.store.listRunners(actor.workspaceId);
+    return runners.map((runner: any) => this.publicRunner(runner));
+  }
+
+  private publicRunner(runner: any): any {
+    return {
+      id: runner.id,
+      workspaceId: runner.workspace_id,
+      name: runner.name,
+      version: runner.version,
+      capabilities: runner.capabilities,
+      lastHeartbeatAt: runner.last_heartbeat_at ?? null,
+      revokedAt: runner.revoked_at ?? null,
+      createdAt: runner.created_at,
+    };
+  }
+
+  async authenticateRunner(secret: string): Promise<RunnerActor> {
+    const runner = await this.store.getRunnerByCredentialHash(hashToken(secret));
+    if (!runner)
+      throw new MadeProofError(
+        'RUNNER_AUTH_REQUIRED',
+        'Runner credential is invalid, expired or revoked',
+        401,
+      );
+    if (!isCompatibleRunnerVersion(runner.version))
+      throw new MadeProofError(
+        'RUNNER_VERSION_INCOMPATIBLE',
+        'Runner protocol version must match 0.1.x',
+        400,
+      );
+    return {
+      id: runner.id,
+      workspaceId: runner.workspace_id,
+      type: 'RUNNER',
+      scopes: ['runner'],
+      runnerId: runner.id,
+      capabilities: runner.capabilities,
+      version: runner.version,
+    };
+  }
+
+  async runnerHeartbeat(
+    runner: RunnerActor,
+    version: string,
+    capabilities: string[],
+  ): Promise<void> {
+    if (!isCompatibleRunnerVersion(version))
+      throw new MadeProofError(
+        'RUNNER_VERSION_INCOMPATIBLE',
+        'Runner protocol version must match 0.1.x',
+        400,
+      );
+    const registered = new Set(runner.capabilities);
+    for (const capability of capabilities)
+      if (!registered.has(capability))
+        throw new MadeProofError(
+          'RUNNER_CAPABILITY_MISMATCH',
+          `Runner was not registered with capability ${capability}`,
+          403,
+        );
+    await this.store.heartbeatRunner(runner.workspaceId, runner.runnerId, version, capabilities);
+  }
+
+  async revokeRunner(actor: Actor, runnerId: string): Promise<boolean> {
+    this.requireUser(actor);
+    const revoked = await this.store.revokeRunner(actor.workspaceId, runnerId);
+    if (revoked) await this.audit(actor, 'runner.revoked', 'runner', runnerId);
+    return revoked;
+  }
+
+  // ------------------------------------------------------- projects & tasks
+
+  async createProject(
     actor: Actor,
     input: { name: string; projectType?: string; repositoryUrl?: string },
-  ): any {
+  ): Promise<any> {
     this.requireScope(actor, 'projects:write');
-    const project = this.store.createProject({ workspaceId: actor.workspaceId, ...input });
-    this.audit(actor, 'project.created', 'project', project.id, undefined, project);
+    const project = await this.store.createProject({ workspaceId: actor.workspaceId, ...input });
+    await this.audit(actor, 'project.created', 'project', project.id, undefined, project);
     return project;
   }
 
-  listProjects(actor: Actor, limit = 50, offset = 0): any[] {
+  async listProjects(actor: Actor, limit = 50, offset = 0): Promise<any[]> {
     this.requireScope(actor, 'projects:read');
     return this.store.listProjects(actor.workspaceId, Math.min(limit, 100), Math.max(offset, 0));
   }
 
-  getProject(actor: Actor, projectId: string): any {
+  async getProject(actor: Actor, projectId: string): Promise<any> {
     this.requireScope(actor, 'projects:read');
     return this.store.getProject(actor.workspaceId, projectId);
   }
 
-  createTask(
+  async createTask(
     actor: Actor,
     input: { projectId: string; title: string; intent: string; template?: string },
-  ): any {
+  ): Promise<any> {
     this.requireScope(actor, 'tasks:write');
-    const task = this.store.createTask({
+    const task = await this.store.createTask({
       workspaceId: actor.workspaceId,
       actorId: actor.id,
       ...input,
     });
-    this.audit(actor, 'task.created', 'task', task.id, undefined, task);
+    await this.audit(actor, 'task.created', 'task', task.id, undefined, task);
     return task;
   }
 
-  listTasks(
+  async listTasks(
     actor: Actor,
     filters: { status?: string; projectId?: string; limit?: number; offset?: number } = {},
-  ): any[] {
+  ): Promise<any[]> {
     this.requireScope(actor, 'tasks:read');
     return this.store.listTasks(actor.workspaceId, filters);
   }
 
-  getTask(actor: Actor, taskId: string): any {
+  async getTask(actor: Actor, taskId: string): Promise<any> {
     this.requireScope(actor, 'tasks:read');
     return this.store.getTask(actor.workspaceId, taskId);
   }
 
-  generateContract(actor: Actor, taskId: string): OutcomeContract {
+  async generateContract(actor: Actor, taskId: string): Promise<OutcomeContract> {
     this.requireScope(actor, 'tasks:write');
-    const task = this.store.getTask(actor.workspaceId, taskId);
+    const task = await this.store.getTask(actor.workspaceId, taskId);
     const version = Number(task.latest_contract_version) + 1;
     const contract = generateOutcomeContract({
       taskId,
@@ -196,19 +340,19 @@ export class MadeProofService {
       intent: task.intent,
       template: task.template ?? undefined,
     });
-    const created = this.store.createContract(actor.workspaceId, contract);
-    this.audit(actor, 'contract.created', 'contract', contract.id, undefined, created);
+    const created = await this.store.createContract(actor.workspaceId, contract);
+    await this.audit(actor, 'contract.created', 'contract', contract.id, undefined, created);
     return created;
   }
 
-  updateContract(
+  async updateContract(
     actor: Actor,
     taskId: string,
     input: Partial<OutcomeContract> & { acceptanceCriteria?: AcceptanceCriterion[] },
-  ): OutcomeContract {
+  ): Promise<OutcomeContract> {
     this.requireScope(actor, 'tasks:write');
-    const task = this.store.getTask(actor.workspaceId, taskId);
-    const previous = this.store.getContract(actor.workspaceId, taskId);
+    const task = await this.store.getTask(actor.workspaceId, taskId);
+    const previous = await this.store.getContract(actor.workspaceId, taskId);
     if (previous.lockedAt)
       throw new MadeProofError(
         'CONTRACT_LOCKED',
@@ -237,23 +381,25 @@ export class MadeProofService {
         'Outcome contract requires at least one acceptance criterion',
         422,
       );
-    const created = this.store.createContract(actor.workspaceId, next);
-    this.audit(actor, 'contract.version_created', 'contract', next.id, previous, created);
+    const created = await this.store.createContract(actor.workspaceId, next);
+    await this.audit(actor, 'contract.version_created', 'contract', next.id, previous, created);
     return created;
   }
 
-  listContracts(actor: Actor, taskId: string): OutcomeContract[] {
+  async listContracts(actor: Actor, taskId: string): Promise<OutcomeContract[]> {
     this.requireScope(actor, 'tasks:read');
     return this.store.listContracts(actor.workspaceId, taskId);
   }
 
-  startRun(
+  // ------------------------------------------------------------------- runs
+
+  async startRun(
     actor: Actor,
     taskId: string,
     input: { metadata?: Record<string, unknown>; artifactRef?: string; agentId?: string } = {},
-  ): any {
+  ): Promise<any> {
     this.requireScope(actor, 'tasks:write');
-    const task = this.store.getTask(actor.workspaceId, taskId);
+    const task = await this.store.getTask(actor.workspaceId, taskId);
     if (!['READY', 'FAILED', 'REVIEW_REQUIRED', 'VERIFIED'].includes(task.status))
       throw new MadeProofError(
         'TASK_NOT_RUNNABLE',
@@ -261,18 +407,32 @@ export class MadeProofService {
         409,
       );
     assertTaskTransition(task.status, 'IN_PROGRESS');
-    this.store.updateTaskStatus(actor.workspaceId, task.id, task.status, 'IN_PROGRESS');
-    const run = this.store.startRun({
+    await this.store.updateTaskStatus(actor.workspaceId, task.id, task.status, 'IN_PROGRESS');
+    const run = await this.store.startRun({
       workspaceId: actor.workspaceId,
       taskId,
       actorId: actor.id,
       ...input,
     });
-    this.audit(actor, 'run.created', 'run', run.id, undefined, run);
+    await this.audit(actor, 'run.created', 'run', run.id, undefined, run);
     return run;
   }
 
-  addEvidence(
+  async listRuns(actor: Actor, taskId: string): Promise<any[]> {
+    this.requireScope(actor, 'tasks:read');
+    return this.store.listRuns(actor.workspaceId, taskId);
+  }
+
+  async getRun(actor: Actor, runId: string): Promise<any> {
+    this.requireScope(actor, 'tasks:read');
+    return this.store.getRun(actor.workspaceId, runId);
+  }
+
+  /**
+   * Record agent-reported evidence. It is stored with SELF_REPORTED provenance
+   * and is never treated as independent proof by the verification engine.
+   */
+  async addEvidence(
     actor: Actor,
     runId: string,
     input: {
@@ -282,9 +442,9 @@ export class MadeProofService {
       source?: string;
       mimeType?: string;
     },
-  ): any {
+  ): Promise<any> {
     this.requireScope(actor, 'evidence:write');
-    const run = this.store.getRun(actor.workspaceId, runId);
+    const run = await this.store.getRun(actor.workspaceId, runId);
     if (!['AWAITING_EVIDENCE', 'RUNNING'].includes(run.status))
       throw new MadeProofError(
         'RUN_NOT_ACCEPTING_EVIDENCE',
@@ -302,8 +462,8 @@ export class MadeProofService {
       provenance: actor.type === 'GITHUB' ? 'EXTERNAL_SIGNED' : 'SELF_REPORTED',
       mimeType: input.mimeType,
     });
-    this.store.addEvidence(item);
-    this.audit(actor, 'evidence.added', 'evidence', item.id, undefined, {
+    await this.store.addEvidence(item);
+    await this.audit(actor, 'evidence.added', 'evidence', item.id, undefined, {
       runId,
       type: item.type,
       provenance: item.provenance,
@@ -312,64 +472,72 @@ export class MadeProofService {
     return item;
   }
 
+  /**
+   * Queue independent verification for a run. The control plane never executes checks:
+   * a durable verification job is created and a worker performs it, delegating
+   * executable checks to an isolated runner. Returns the queued job.
+   */
   async verify(actor: Actor, runId: string): Promise<any> {
     this.requireScope(actor, 'verification:run');
-    const run = this.store.getRun(actor.workspaceId, runId);
-    const contract = this.store.getContract(actor.workspaceId, run.task_id, run.contract_version);
-    const evidence = this.store.listEvidence(actor.workspaceId, runId);
-    return await this.engine.verify({
+    const run = await this.store.getRun(actor.workspaceId, runId);
+    if (!['AWAITING_EVIDENCE', 'RUNNING'].includes(run.status))
+      throw new MadeProofError(
+        'RUN_NOT_VERIFIABLE',
+        `Run in ${run.status} cannot enter verification; create a retry run instead.`,
+        409,
+      );
+    const job = await this.store.enqueueVerificationJob({
       workspaceId: actor.workspaceId,
+      runId,
       actorId: actor.id,
-      run,
-      contract,
-      evidence,
-      store: this.store,
-      evidenceService: this.evidenceService,
-      commandRunner: this.commandRunner,
-      projectRoot: this.projectRoot,
-      baseUrl: this.config.publicBaseUrl,
     });
+    await this.audit(actor, 'verification.queued', 'run', runId, undefined, { jobId: job.id });
+    return job;
   }
 
-  retry(
-    actor: Actor,
-    runId: string,
-    input: { metadata?: Record<string, unknown>; artifactRef?: string } = {},
-  ): any {
+  async cancelVerification(actor: Actor, runId: string): Promise<boolean> {
     this.requireScope(actor, 'verification:run');
-    const previous = this.store.getRun(actor.workspaceId, runId);
-    return this.startRun(actor, previous.task_id, {
-      metadata: { ...previous.metadata, ...input.metadata },
-      artifactRef: input.artifactRef ?? previous.artifact_ref,
+    const cancelled = await this.store.cancelVerificationJob(actor.workspaceId, runId);
+    if (!cancelled) return false;
+    const run = await this.store.getRun(actor.workspaceId, runId);
+    if (!['CREATED', 'QUEUED', 'RUNNING', 'AWAITING_EVIDENCE', 'VERIFYING'].includes(run.status))
+      return true;
+    const task = await this.store.getTask(actor.workspaceId, run.task_id);
+    assertTaskTransition(task.status, 'CANCELLED');
+    await this.store.updateRunStatus(actor.workspaceId, runId, run.status, 'CANCELLED');
+    await this.store.updateTaskStatus(actor.workspaceId, task.id, task.status, 'CANCELLED');
+    await this.audit(actor, 'verification.cancelled', 'run', runId, undefined, {
+      jobId: (await this.store.getVerificationJob(actor.workspaceId, runId))?.id,
     });
+    return true;
   }
 
-  getRun(actor: Actor, runId: string): any {
-    this.requireScope(actor, 'tasks:read');
-    return this.store.getRun(actor.workspaceId, runId);
-  }
-
-  getVerification(actor: Actor, runId: string): any {
+  async getVerification(actor: Actor, runId: string): Promise<any> {
     this.requireScope(actor, 'tasks:read');
     return {
-      results: this.store.getResults(actor.workspaceId, runId),
-      verdict: this.store.getVerdict(actor.workspaceId, runId),
+      job: await this.store.getVerificationJob(actor.workspaceId, runId),
+      results: await this.store.getResults(actor.workspaceId, runId),
+      verdict: await this.store.getVerdict(actor.workspaceId, runId),
     };
   }
 
-  getVerdict(actor: Actor, runId: string): any {
+  async getVerdict(actor: Actor, runId: string): Promise<any> {
     this.requireScope(actor, 'tasks:read');
     return this.store.getVerdict(actor.workspaceId, runId);
   }
 
-  getFailedChecks(actor: Actor, runId: string): any[] {
+  async getFailedChecks(actor: Actor, runId: string): Promise<any[]> {
     this.requireScope(actor, 'tasks:read');
-    const results = this.store.getResults(actor.workspaceId, runId);
-    const run = this.store.getRun(actor.workspaceId, runId);
-    const contract = this.store.getContract(actor.workspaceId, run.task_id, run.contract_version);
+    const results = await this.store.getResults(actor.workspaceId, runId);
+    const run = await this.store.getRun(actor.workspaceId, runId);
+    const contract = await this.store.getContract(
+      actor.workspaceId,
+      run.task_id,
+      run.contract_version,
+    );
     return results
-      .filter((item) => ['FAILED', 'INCONCLUSIVE', 'ERROR'].includes(item.status))
-      .map((item) => ({
+      .filter((item: any) => ['FAILED', 'INCONCLUSIVE', 'ERROR'].includes(item.status))
+      .map((item: any) => ({
         ...item,
         criterion: contract.acceptanceCriteria.find(
           (criterion) => criterion.id === item.criterionId,
@@ -377,27 +545,40 @@ export class MadeProofService {
       }));
   }
 
-  getReceipt(actor: Actor, receiptId: string): any {
+  async retry(
+    actor: Actor,
+    runId: string,
+    input: { metadata?: Record<string, unknown>; artifactRef?: string } = {},
+  ): Promise<any> {
+    this.requireScope(actor, 'verification:run');
+    const previous = await this.store.getRun(actor.workspaceId, runId);
+    return this.startRun(actor, previous.task_id, {
+      metadata: { ...previous.metadata, ...input.metadata },
+      artifactRef: input.artifactRef ?? previous.artifact_ref,
+    });
+  }
+
+  async getReceipt(actor: Actor, receiptId: string): Promise<any> {
     this.requireScope(actor, 'receipts:read');
     return this.store.getReceipt(actor.workspaceId, receiptId);
   }
 
-  getReceiptByRun(actor: Actor, runId: string): any {
+  async getReceiptByRun(actor: Actor, runId: string): Promise<any> {
     this.requireScope(actor, 'receipts:read');
     return this.store.getReceiptByRun(actor.workspaceId, runId);
   }
 
-  dashboard(actor: Actor): any {
+  async dashboard(actor: Actor): Promise<any> {
     this.requireScope(actor, 'tasks:read');
     return {
-      counts: this.store.dashboardCounts(actor.workspaceId),
-      attention: this.store.listAttention(actor.workspaceId),
-      projects: this.store.listProjects(actor.workspaceId, 10, 0),
-      tasks: this.store.listTasks(actor.workspaceId, { limit: 20 }),
+      counts: await this.store.dashboardCounts(actor.workspaceId),
+      attention: await this.store.listAttention(actor.workspaceId),
+      projects: await this.store.listProjects(actor.workspaceId, 10, 0),
+      tasks: await this.store.listTasks(actor.workspaceId, { limit: 20 }),
     };
   }
 
-  agentReliability(actor: Actor, agentId?: string): any {
+  async agentReliability(actor: Actor, agentId?: string): Promise<any> {
     this.requireScope(actor, 'tasks:read');
     return {
       agentId: agentId ?? null,
@@ -408,21 +589,21 @@ export class MadeProofService {
     };
   }
 
-  idempotent<T>(
+  async idempotent<T>(
     actor: Actor,
     key: string | undefined,
     route: string,
     input: unknown,
-    operation: () => { status: number; body: T },
-  ): { status: number; body: T; replayed: boolean } {
+    operation: () => { status: number; body: T } | Promise<{ status: number; body: T }>,
+  ): Promise<{ status: number; body: T; replayed: boolean }> {
     if (!key) {
-      const value = operation();
+      const value = await operation();
       return { ...value, replayed: false };
     }
     if (key.length > 200)
       throw new MadeProofError('IDEMPOTENCY_KEY_INVALID', 'Idempotency-Key is too long', 422);
     const requestHash = sha256(canonicalJson(input));
-    const existing = this.store.getIdempotency(actor.workspaceId, key, route);
+    const existing = await this.store.getIdempotency(actor.workspaceId, key, route);
     if (existing) {
       if (existing.request_hash !== requestHash)
         throw new MadeProofError(
@@ -432,8 +613,8 @@ export class MadeProofService {
         );
       return { status: existing.response_status, body: existing.response as T, replayed: true };
     }
-    const value = operation();
-    this.store.saveIdempotency({
+    const value = await operation();
+    await this.store.saveIdempotency({
       workspaceId: actor.workspaceId,
       key,
       route,
@@ -460,15 +641,15 @@ export class MadeProofService {
       );
   }
 
-  private audit(
+  private async audit(
     actor: Actor,
     action: string,
     resourceType: string,
     resourceId: string,
     previous?: unknown,
     resulting?: unknown,
-  ): void {
-    this.store.appendAudit({
+  ): Promise<void> {
+    await this.store.appendAudit({
       workspaceId: actor.workspaceId,
       actorId: actor.id,
       actorType: actor.type,

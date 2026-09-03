@@ -392,7 +392,7 @@ export class PostgresStoreDomain extends PostgresStoreBase {
         w,
       ])
     ).rows[0];
-    if (!x) throw new MadeProofError('VERDICT_NOT_READY', 'Verdict is not available yet', 404);
+    if (!x) return null;
     return { ...x, decision: json(x.decision_json, {}) };
   }
   async saveReceipt(i: any) {

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { startTestApplication } from '../helpers/runtime.js';
+import { runServiceVerification, startTestApplication } from '../helpers/runtime.js';
 
 test('self-reported evidence cannot produce VERIFIED, but independently executed evidence can', async () => {
   const runtime = await startTestApplication('service-flow');
@@ -12,40 +12,41 @@ test('self-reported evidence cannot produce VERIFIED, but independently executed
       type: 'USER' as const,
       scopes: ['*'],
     };
-    const project = service.createProject(actor, { name: 'Trust test' });
+    const project = await service.createProject(actor, { name: 'Trust test' });
 
-    const selfTask = service.createTask(actor, {
+    const selfTask = await service.createTask(actor, {
       projectId: project.id,
       title: 'Self report',
       intent: 'Prove an outcome',
     });
-    service.generateContract(actor, selfTask.id);
-    const selfRun = service.startRun(actor, selfTask.id);
-    service.addEvidence(actor, selfRun.id, {
+    await service.generateContract(actor, selfTask.id);
+    const selfRun = await service.startRun(actor, selfTask.id);
+    await service.addEvidence(actor, selfRun.id, {
       type: 'JSON',
       value: { outcomeSatisfied: true, forbiddenAction: false },
       source: 'agent',
     });
-    service.addEvidence(actor, selfRun.id, {
+    await service.addEvidence(actor, selfRun.id, {
       type: 'TEST_REPORT',
       value: { status: 'passed' },
       source: 'agent',
     });
-    service.addEvidence(actor, selfRun.id, {
+    await service.addEvidence(actor, selfRun.id, {
       type: 'COMMAND_OUTPUT',
       value: { exitCode: 0 },
       source: 'agent',
     });
-    const selfVerdict = await service.verify(actor, selfRun.id);
-    assert.equal(selfVerdict.decision.verdict, 'FAILED');
+    await service.verify(actor, selfRun.id);
+    const selfFinal = await runServiceVerification(service, actor, selfRun.id);
+    assert.equal(selfFinal.verdict.machine_verdict, 'FAILED');
 
-    const observedTask = service.createTask(actor, {
+    const observedTask = await service.createTask(actor, {
       projectId: project.id,
       title: 'Observed evidence',
       intent: 'Prove an outcome',
     });
-    const contract = service.generateContract(actor, observedTask.id);
-    const observedRun = service.startRun(actor, observedTask.id);
+    const contract = await service.generateContract(actor, observedTask.id);
+    const observedRun = await service.startRun(actor, observedTask.id);
     const values: Record<string, any> = {
       [contract.acceptanceCriteria[0]!.id]: { type: 'JSON', value: { outcomeSatisfied: true } },
       [contract.acceptanceCriteria[1]!.id]: { type: 'TEST_REPORT', value: { status: 'passed' } },
@@ -66,9 +67,11 @@ test('self-reported evidence cannot produce VERIFIED, but independently executed
       });
       service.store.addEvidence(evidence);
     }
-    const observedVerdict = await service.verify(actor, observedRun.id);
-    assert.equal(observedVerdict.decision.verdict, 'VERIFIED');
-    assert.match(observedVerdict.receipt.digest, /^[a-f0-9]{64}$/);
+    await service.verify(actor, observedRun.id);
+    const observedFinal = await runServiceVerification(service, actor, observedRun.id);
+    assert.equal(observedFinal.verdict.machine_verdict, 'VERIFIED');
+    const receipt = await service.getReceiptByRun(actor, observedRun.id);
+    assert.match(receipt.digest, /^[a-f0-9]{64}$/);
   } finally {
     await runtime.close();
   }
@@ -84,23 +87,24 @@ test('locked contract is immutable and retry creates a new run without rewriting
       type: 'USER' as const,
       scopes: ['*'],
     };
-    const project = service.createProject(actor, { name: 'History' });
-    const task = service.createTask(actor, {
+    const project = await service.createProject(actor, { name: 'History' });
+    const task = await service.createTask(actor, {
       projectId: project.id,
       title: 'History task',
       intent: 'Preserve audit history',
     });
-    service.generateContract(actor, task.id);
-    const run1 = service.startRun(actor, task.id);
-    await service.verify(actor, run1.id);
-    assert.throws(
+    await service.generateContract(actor, task.id);
+    const run1 = await service.startRun(actor, task.id);
+    await runServiceVerification(service, actor, run1.id);
+    await assert.rejects(
       () => service.updateContract(actor, task.id, { goal: 'retroactively weakened' }),
       (error: any) => error.code === 'CONTRACT_LOCKED',
     );
-    const run2 = service.retry(actor, run1.id);
+    const run2 = await service.retry(actor, run1.id);
     assert.notEqual(run2.id, run1.id);
     assert.equal(run2.attempt, 2);
-    assert.equal(service.getVerdict(actor, run1.id).machine_verdict, 'FAILED');
+    const verdict = await service.getVerdict(actor, run1.id);
+    assert.equal(verdict.machine_verdict, 'FAILED');
   } finally {
     await runtime.close();
   }
