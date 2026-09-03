@@ -72,7 +72,7 @@ async function freePort(): Promise<number> {
   });
 }
 
-async function waitForJson(url: string, timeoutMs = 10000): Promise<any> {
+async function waitForJson(url: string, timeoutMs = 30000): Promise<any> {
   const deadline = Date.now() + timeoutMs;
   let lastError: unknown;
   while (Date.now() < deadline) {

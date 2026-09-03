@@ -4,7 +4,7 @@ import path from 'node:path';
 import { BrowserSession } from '../../apps/runner/src/cdp-browser.js';
 import { startTestApplication } from '../helpers/runtime.js';
 
-const runtime = await startTestApplication('browser-ui');
+const runtime = await startTestApplication('browser-ui', { distributed: true });
 const browser = new BrowserSession();
 try {
   await browser.start(1440, 1000);

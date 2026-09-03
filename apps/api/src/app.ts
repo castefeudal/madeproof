@@ -515,7 +515,8 @@ export function createApplication(overrides: Partial<RuntimeConfig> = {}): Appli
           return sendJson(response, revoked ? 200 : 404, { revoked });
         }
 
-        throw new MadeProofError('NOT_FOUND', 'API route not found', 404);
+        if(pathname==='/api/v1/runners'&&method==='GET')return sendJson(response,200,{items:await service.listRunners(actor)});if(pathname==='/api/v1/runners'&&method==='POST'){const body=await readJson(request);return sendJson(response,201,await service.createRunner(actor,{name:requiredString(body.name,'name',2),version:requiredString(body.version,'version'),capabilities:Array.isArray(body.capabilities)?body.capabilities.map(String):[]}))}const runnerMatch=pathname.match(/^\/api\/v1\/runners\/([^/]+)$/);if(runnerMatch&&method==='DELETE'){const revoked=await service.revokeRunner(actor,runnerMatch[1]!);return sendJson(response,revoked?200:404,{revoked})}
+        throw new MadeProofError('NOT_FOUND','API route not found',404)
       }
 
       if (serveStatic(response, webRoot, pathname)) return;

@@ -78,6 +78,27 @@ jobs:
       - run: npm install --ignore-scripts
       - run: npm run test:postgres
 
+  sandbox:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24.20.0
+          cache: npm
+      - run: npm install --ignore-scripts
+      - name: Configure unprivileged user namespaces for Bubblewrap
+        run: |
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Install Bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - run: npm run build
+      - name: Execute strong sandbox smoke as the non-root GitHub runner user
+        run: node dist/tests/sandbox/strong-sandbox-smoke.js
+
   containers:
     runs-on: ubuntu-24.04
     steps:
@@ -88,9 +109,7 @@ jobs:
         run: docker build -f infra/docker/Dockerfile.worker -t madeproof-worker:ci .
       - name: Build runner image
         run: docker build -f infra/docker/Dockerfile.runner -t madeproof-runner:ci .
-      - name: Assert runner is non-root and sandbox dependencies exist
+      - name: Assert runner image is non-root and contains sandbox dependencies
         run: |
           test "$(docker image inspect madeproof-runner:ci --format '{{.Config.User}}')" = "node"
           docker run --rm --entrypoint sh madeproof-runner:ci -lc 'test "$(id -u)" -ne 0 && command -v bwrap && command -v chromium && command -v prlimit'
-      - name: Execute strong sandbox smoke
-        run: docker run --rm --entrypoint node madeproof-runner:ci dist/tests/sandbox/strong-sandbox-smoke.js
