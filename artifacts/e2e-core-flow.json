@@ -1,79 +1,79 @@
 {
-  "generatedAt": "2026-09-03T11:42:41.244Z",
-  "taskId": "tsk_f5f5ad4795364c08876bfe080bdc8ad2",
-  "contractId": "contract_7f4d71c32b1148048f79542f350f96f0",
+  "generatedAt": "2026-09-03T12:46:31.114Z",
+  "taskId": "tsk_1b77f4c910da4d82906616e283e1a81a",
+  "contractId": "contract_64eb57f67e524d0eab97ad24e25e7ec0",
   "failedRun": {
-    "id": "run_db8e5f25d5d441dc98c94fffb6159a69",
+    "id": "run_a96673b8a6ca4b2e9341b612fd9c88ad",
     "verdict": "FAILED",
     "passed": 5,
     "total": 7,
-    "receiptDigest": "014cc46d51d9785833d92a20ad0e22b388f91559bbcc7e08281655db3372e714"
+    "receiptDigest": "89b79e72e73e6057ac87446dcc8ea1bfebd4ea281eae6dfff534e7a413f2d176"
   },
   "retryRun": {
-    "id": "run_932fcbde45d6417fb69fe477ebc98317",
+    "id": "run_1471b40bc1c147ff9df32f8a0e632f36",
     "verdict": "VERIFIED",
     "passed": 7,
     "total": 7,
-    "receiptDigest": "72122ae8f4b6ec026fd044052dcdd748c3552368153bb5822c2a5431c3c0ab94"
+    "receiptDigest": "0b077076ffe71efad91fd3e44d37f8029735900ef3ee1db14b3b4b7b9570dfee"
   },
   "evidence": [
     {
-      "criterionId": "crit_1cf42cdc133544c8a76d0088383316e4",
+      "criterionId": "crit_c45ff768d50b48c28e303b739902463f",
       "status": "PASSED",
       "summary": "Scenario B activated through pointer.",
       "evidenceIds": [
-        "evd_70cf02e74f804fb89f21c3a77bf3762e",
-        "evd_4613d8e19067402a9c99b0485aa64371"
+        "evd_57629adf0d65403cb48ff5ec07f432c6",
+        "evd_cf8c239202ed4bc7841c647f3051c97f"
       ]
     },
     {
-      "criterionId": "crit_13871e6f0c2544358e1d436c8183b8c2",
+      "criterionId": "crit_8b07fe2e1f3f4bd797c9764c44e4c6ee",
       "status": "PASSED",
       "summary": "Scenario B activated through keyboard.",
       "evidenceIds": [
-        "evd_c492f09d06894c3792904b41f988e117",
-        "evd_0128bc34e7dd4a57be4d2db4b3398c0b"
+        "evd_d3fee42aebe143b2a733d0c36d8cf2ab",
+        "evd_7576842941b644399c761d7b6facebca"
       ]
     },
     {
-      "criterionId": "crit_d250551d496749df989edcac92038406",
+      "criterionId": "crit_252ec9f4c21946ba96c174232b4ca216",
       "status": "PASSED",
       "summary": "ARIA state reflects the active scenario.",
       "evidenceIds": [
-        "evd_63f76d1650cb42c0b4ee4d55789ffb33"
+        "evd_2ac41c1c6a864471a0bbddc6cfbc6156"
       ]
     },
     {
-      "criterionId": "crit_131182a453014f6bad644ab72d7dd86d",
+      "criterionId": "crit_78abd0bf4ae143759cd6cb3ce7d23c6a",
       "status": "PASSED",
       "summary": "test_suite completed with exit code 0.",
       "evidenceIds": [
-        "evd_c3680d637cf242afbd78a9b353bed1f7"
+        "evd_50919166f6e84a42a0b26be622aeb210"
       ]
     },
     {
-      "criterionId": "crit_4dd8266f659b462881da5930971b563f",
+      "criterionId": "crit_7446053826b8428e9010b57f62ee062d",
       "status": "PASSED",
       "summary": "build completed with exit code 0.",
       "evidenceIds": [
-        "evd_4ddd4498074b41dbb6db14507e7bd364"
+        "evd_f1234c135c3f46589cddadf39b0cb21c"
       ]
     },
     {
-      "criterionId": "crit_5b92803060ed453784f99c93f8e75870",
+      "criterionId": "crit_3bdb5f71648946a2987a258e69e2ed4e",
       "status": "PASSED",
       "summary": "No horizontal overflow was observed at representative mobile widths.",
       "evidenceIds": [
-        "evd_df2ff80e51694d0ca0d0564a11737794",
-        "evd_64e304b9a8fa4d7dac5b1eee064863e6"
+        "evd_0a1109ee7a534eb3904e2c78cf1884db",
+        "evd_48f6af32085844598aff0f7c6fb3fd84"
       ]
     },
     {
-      "criterionId": "crit_6ec2dc8b9d7346c9b94f4584e680b0c0",
+      "criterionId": "crit_bd74c836cb8a4ae5a5ef4d7f73849e43",
       "status": "PASSED",
       "summary": "No serious defects were found by the automated accessibility smoke.",
       "evidenceIds": [
-        "evd_435de6ae3f6e4111b44bff6e80933e27"
+        "evd_59a2d6b5c03142ac92337cce5cbc3b18"
       ]
     }
   ]

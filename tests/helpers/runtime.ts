@@ -47,7 +47,7 @@ export async function startTestApplication(label = 'test', options: { distribute
     runnerLoop = runner.runLoop();
   }
   return {
-    app, url: started.url, dataDir,
+    app, url: started.url, dataDir, worker, runner,
     async close() {
       runner?.stop(); worker?.stop();
       await Promise.allSettled([runnerLoop, workerLoop].filter(Boolean) as Promise<void>[]);
