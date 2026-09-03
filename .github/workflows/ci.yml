@@ -93,4 +93,7 @@ jobs:
           test "$(docker image inspect madeproof-runner:ci --format '{{.Config.User}}')" = "node"
           docker run --rm --entrypoint sh madeproof-runner:ci -lc 'test "$(id -u)" -ne 0 && command -v bwrap && command -v chromium && command -v prlimit'
       - name: Execute strong sandbox smoke
-        run: docker run --rm --entrypoint node madeproof-runner:ci dist/tests/sandbox/strong-sandbox-smoke.js
+        # Docker's default seccomp profile blocks the unprivileged user namespace
+        # that bubblewrap requires. The runner remains non-root and receives no
+        # host capabilities, mounts, devices, or Docker socket.
+        run: docker run --rm --security-opt seccomp=unconfined --cap-drop=ALL --entrypoint node madeproof-runner:ci dist/tests/sandbox/strong-sandbox-smoke.js
