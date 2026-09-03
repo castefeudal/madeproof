@@ -235,7 +235,7 @@ export class SafeCommandRunner {
         for (const [key, value] of Object.entries(env)) bwrapArgs.push('--setenv', key, value);
         command = [bwrap, ...bwrapArgs];
         if (useNetworkNamespace) {
-          command.push('unshare', '--user', '--map-root-user', '--net');
+          bwrapArgs.push('--unshare-net');
           isolation.push('network-namespace');
         }
         command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=256', '--nofile=1024');

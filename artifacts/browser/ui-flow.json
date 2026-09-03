@@ -1,6 +1,6 @@
 {
   "verdict": "VERIFIED",
-  "digest": "621c6a12e06ee0a86425478688afe7be38711904140da60d1f50db152f542724",
+  "digest": "a13659f46dea0742263700eecfc492454be96935285c86ac9d1aec9dbfa705e4",
   "failuresObserved": [
     "Scenario B did not activate through keyboard.",
     "ARIA state does not reflect the expected active scenario."
