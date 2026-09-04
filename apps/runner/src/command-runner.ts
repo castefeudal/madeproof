@@ -32,7 +32,7 @@ export interface SafeCommandRunnerOptions {
   allowWeakIsolationFallback?: boolean;
 }
 
-const BWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap'];
+export const BWRAP_PATHS = ['/usr/bin/bwrap', '/bin/bwrap'];
 const OUTPUT_CAP_BYTES = 2 * 1024 * 1024;
 const SYSTEM_READ_PATHS = ['/usr', '/bin', '/sbin', '/lib', '/lib64', '/etc'];
 
@@ -47,12 +47,14 @@ function firstExisting(paths: string[]): string | null {
   return null;
 }
 
-/**
- * Detect (once per process) whether the kernel supports cgroup namespaces so the
- * isolation report only ever claims isolation that was actually applied.
- */
 let cgroupNamespaceSupport: boolean | null = null;
-function supportsCgroupNamespace(bwrap: string): boolean {
+
+/**
+ * Detect (once per process, exported for capability-aware tests) whether the
+ * kernel supports cgroup namespaces so the isolation report only ever claims
+ * isolation that was actually applied.
+ */
+export function supportsCgroupNamespace(bwrap: string): boolean {
   if (cgroupNamespaceSupport !== null) return cgroupNamespaceSupport;
   try {
     const probe = childProcess.spawnSync(
@@ -200,6 +202,7 @@ export class SafeCommandRunner {
           'environment-allowlist',
           'resource-limits',
           'bubblewrap-user-mount-pid-ipc-uts-namespaces',
+          'filesystem-allowlist',
         ];
         const bwrapArgs = [
           '--die-with-parent',

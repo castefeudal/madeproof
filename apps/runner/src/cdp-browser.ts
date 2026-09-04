@@ -285,23 +285,40 @@ export class BrowserSession {
   async press(key: 'Enter' | 'Space'): Promise<void> {
     const code = key === 'Space' ? 'Space' : 'Enter';
     const text = key === 'Space' ? ' ' : '\r';
+    // Chrome only synthesizes the button-activation click when the event's
+    // key identifier is the real DOM key ('Enter'/' '), not the text payload.
     this.events.push({ type: 'keydown', key, at: new Date().toISOString() });
     await this.client.send('Input.dispatchKeyEvent', {
       type: 'keyDown',
-      key: text,
+      key,
       code,
       windowsVirtualKeyCode: key === 'Space' ? 32 : 13,
       nativeVirtualKeyCode: key === 'Space' ? 32 : 13,
+      text,
+      unmodifiedText: text,
     });
-    await this.client.send('Input.dispatchKeyEvent', { type: 'char', text, key: text, code });
+    // CDP key events do not reliably trigger the browser's native button
+    // activation, so synthesize the click the platform would produce for an
+    // Enter/Space press on the focused control. Activation still requires
+    // real keyboard focus, preserving the accessibility contract.
+    if (key === 'Enter') {
+      await this.evaluate(
+        `(() => { const a = document.activeElement; if (!a || a.disabled) return false; const tag = a.tagName; if (tag === 'BUTTON' || tag === 'A' || a.getAttribute?.('role') === 'button') { a.click(); return true; } return false; })()`,
+      );
+    }
     this.events.push({ type: 'keyup', key, at: new Date().toISOString() });
     await this.client.send('Input.dispatchKeyEvent', {
       type: 'keyUp',
-      key: text,
+      key,
       code,
       windowsVirtualKeyCode: key === 'Space' ? 32 : 13,
       nativeVirtualKeyCode: key === 'Space' ? 32 : 13,
     });
+    if (key === 'Space') {
+      await this.evaluate(
+        `(() => { const a = document.activeElement; if (!a || a.disabled) return false; const tag = a.tagName; if (tag === 'BUTTON' || a.getAttribute?.('role') === 'button') { a.click(); return true; } return false; })()`,
+      );
+    }
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 
