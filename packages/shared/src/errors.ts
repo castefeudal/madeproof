@@ -17,7 +17,7 @@ export function assertCondition(
   code: string,
   message: string,
   status = 400,
-  details?: Record<string, unknown>
+  details?: Record<string, unknown>,
 ): asserts condition {
   if (!condition) throw new MadeProofError(code, message, status, details);
 }

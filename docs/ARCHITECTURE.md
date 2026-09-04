@@ -1,21 +1,79 @@
 # MADEPROOF architecture
 
-MADEPROOF uses a modular control plane with separate worker and execution boundaries.
+A verification-first control plane for delegated AI work.
 
-- **API/Web** — authentication, tenancy, contracts/runs, evidence intake, durable queue submission, receipts and runner control endpoints. It never executes target-repository commands.
-- **PostgreSQL** — production source of truth. Verification and runner jobs are durable and claimed with leases; PostgreSQL claims use `FOR UPDATE SKIP LOCKED`.
-- **Worker** — claims verification jobs, creates runner jobs, validates returned evidence, calculates conservative verdicts and creates immutable receipts.
-- **Runner** — outbound-only client with no database credential. It executes only workspace/capability-compatible jobs and returns evidence under a short-lived lease.
-- **MCP/CLI/SDK** — clients of the same control-plane invariants.
+## Mental model
 
-`POST /runs/:id/verify` means **enqueue independent verification** and returns HTTP 202. A verdict appears only after worker/runner processing.
+```text
+  human / agent
+       │  claims work is done
+       ▼
+  ┌─────────┐   202 QUEUED   ┌────────┐   lease   ┌────────┐
+  │   API   │ ─────────────▶ │ Worker │ ────────▶ │ Runner │
+  └─────────┘                └────────┘           └────────┘
+       │                          │                    │
+       ▼                          ▼                    ▼
+  PostgreSQL ◀──────────── evidence ◀────────── isolated
+  (source of truth)        (artifacts)        execution
+       │
+       ▼
+   RECEIPT (immutable, digest-pinned)
+```
 
-Production migrations live in `packages/db/migrations/postgres`. `PostgresStore.migrate()` serializes migration runners with a PostgreSQL advisory lock and commits each migration plus its `schema_migrations` record atomically.
+## Components
 
-Failure semantics:
+| Component | Directory | Responsibility | Never does |
+| --- | --- | --- | --- |
+| **API** | `apps/api` | control plane: auth, tenancy, contracts, runs, evidence intake, queue submission, receipts, runner control | execute target commands |
+| **Web** | `apps/web` | product UI: dashboard, runs, criteria, evidence, receipts | hold business rules |
+| **Worker** | `apps/worker` | claims verification jobs, coordinates executable verification, validates evidence, computes conservative verdicts | talk to users |
+| **Runner** | `apps/runner` | outbound-only execution boundary: isolated command execution, browser checks | listen inbound; hold DB credentials |
+| **CLI** | `apps/cli` | terminal client: auth, submissions, status, results, receipts | duplicate server logic |
+| **MCP** | `apps/mcp` | agent-facing surface over the same control plane | bypass tenancy |
+| **SDK** | `packages/sdk` | typed programmatic client | log credentials |
+| **Core** | `packages/core` | domain: contracts, state machine, verdicts, receipts | depend on apps |
+| **Domain** | `packages/domain` | acceptance criteria, evidence model | — |
+| **Evidence** | `packages/evidence` | provenance, trust tiers, hashing | claim a pass |
+| **Verification** | `packages/verification` | check engines, aggregation, verdicts | trust self-reports |
+| **DB** | `packages/db` | SQLite (dev) and PostgreSQL (production) stores, migrations | leak between workspaces |
+| **Config** | `packages/config` | runtime configuration, validation | allow insecure production defaults |
+| **Shared** | `packages/shared` | shared types and utilities | — |
+| **Security** | `packages/security` | sandboxing, secret handling | weaken isolation to make tests pass |
 
-- API crash: queued jobs remain durable.
-- Worker crash: expired worker lease is reclaimable; completed criterion results are preserved.
-- Runner crash: expired job lease is requeued or times out after max attempts.
-- Runner unavailable: executable criterion becomes infrastructure `ERROR`, never false `VERIFIED`.
-- Cancellation: queue/runner work is cancelled and task/run leave active verification states.
+## Data flow
+
+1. A project, a task and a contract with acceptance criteria exist.
+2. A run is started (`POST /runs`).
+3. Evidence is attached — self-reported (`SELF_REPORTED`) or independently observed (`OBSERVED`).
+4. The run is submitted for verification (`POST /runs/:id/verify` → **202 Accepted**).
+5. The API enqueues a durable verification job in PostgreSQL.
+6. A worker claims the job with a lease; expired leases are reclaimed after a crash.
+7. The worker dispatches executable checks to a runner.
+8. The runner executes inside Bubblewrap namespaces and returns evidence.
+9. The worker validates the evidence and computes a conservative verdict.
+10. A receipt is finalized — immutable, tied to the run and the criterion results.
+
+`POST /runs/:id/verify` returns **202** — it means *verification has been queued*, never that a verdict exists.
+
+## State machine
+
+```
+QUEUED → VERIFYING → VERIFIED
+                  → FAILED
+                  → ERROR
+                  → CANCELLED
+```
+
+Aggregation is conservative:
+
+- any criterion `FAILED` → verdict `FAILED`;
+- any criterion `ERROR` → verdict `ERROR`;
+- `VERIFIED` only when every mandatory criterion is `PASSED`;
+- infrastructure errors never become proof of success.
+
+## Stores
+
+- **PostgreSQL** — production source of truth. Jobs claimed with `SELECT … FOR UPDATE SKIP LOCKED`. Migrations are additive, applied under an advisory lock, and recorded in `schema_migrations`.
+- **SQLite** — local development and tests. Same domain semantics; not a production fallback.
+
+See [RUNNER.md](./RUNNER.md) for the execution boundary and [SECURITY.md](./SECURITY.md) for the trust model.

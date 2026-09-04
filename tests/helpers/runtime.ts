@@ -3,7 +3,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { createApplication } from '../../apps/api/src/app.js';
-import { SqliteDistributedStore } from '../../packages/db/src/sqlite-distributed-store.js';
+import { SqliteStore } from '../../packages/db/src/sqlite-store.js';
 import { EvidenceService } from '../../packages/evidence/src/evidence-service.js';
 import { VerificationWorker } from '../../apps/worker/src/worker.js';
 import { RunnerAgent } from '../../apps/runner/src/agent.js';
@@ -30,7 +30,7 @@ export async function startTestApplication(label = 'test', options: { distribute
     encryptionKey: 'test-encryption-key-is-at-least-thirty-two-characters', databaseKind: 'sqlite'
   });
   const started = await app.start();
-  let workerStore: SqliteDistributedStore | undefined;
+  let workerStore: SqliteStore | undefined;
   let worker: VerificationWorker | undefined;
   let runner: RunnerAgent | undefined;
   let workerLoop: Promise<void> | undefined;
@@ -39,7 +39,7 @@ export async function startTestApplication(label = 'test', options: { distribute
     const actor = { id: app.service.owner.userId, workspaceId: app.service.owner.workspaceId, type: 'USER' as const, scopes: ['*'] };
     const capabilities = ['command', 'build', 'test_suite', 'browser', 'accessibility', 'file', 'http'];
     const registration = await app.service.createRunner(actor, { name: `test-runner-${label}`, version: '0.1.0', capabilities });
-    workerStore = new SqliteDistributedStore(dataDir);
+    workerStore = new SqliteStore(dataDir);
     await workerStore.migrate();
     worker = new VerificationWorker(workerStore, new EvidenceService(dataDir), { workerId: `test-worker-${label}`, leaseSeconds: 5, idleDelayMs: 20, runnerPollDelayMs: 50, runnerWaitMaxMs: 30_000, baseUrl: started.url, projectRoot: path.resolve('.') });
     runner = new RunnerAgent({ baseUrl: started.url, credential: registration.secret, version: '0.1.0', capabilities, allowedRoots: [path.resolve('.')], pollIntervalMs: 300, allowRootProcess: typeof process.getuid === 'function' && process.getuid() === 0, allowWeakIsolationFallback: true });
@@ -47,7 +47,7 @@ export async function startTestApplication(label = 'test', options: { distribute
     runnerLoop = runner.runLoop();
   }
   return {
-    app, url: started.url, dataDir,
+    app, url: started.url, dataDir, worker, runner,
     async close() {
       runner?.stop(); worker?.stop();
       await Promise.allSettled([runnerLoop, workerLoop].filter(Boolean) as Promise<void>[]);

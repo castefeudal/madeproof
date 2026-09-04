@@ -1,48 +1,99 @@
-# MADEPROOF runner boundary
+# MADEPROOF runner
 
-The runner is the only component allowed to execute target-project commands. The API/control plane never imports or invokes the command runner.
+The Runner is the only component allowed to execute target-project commands. It is a security boundary: the control plane (API/Web) never executes repository code.
+
+## Trust position
 
 ```text
-API/control plane -> PostgreSQL verification_jobs
-Worker -> runner_jobs
-Runner <- outbound HTTPS poll only
-Runner -> short-lived single-use job lease -> isolated execution -> evidence draft
-Worker -> validates/materializes evidence -> verdict + receipt
+API / control plane
+        │  (durable verification_jobs + runner_jobs, leases)
+        ▼
+     Worker
+        │  (claims jobs, validates evidence, finalizes receipts)
+        ▼
+     Runner  ◀── outbound HTTPS polling only
+        │     (no DB credential, no inbound port)
+        ▼
+ isolated disposable workspace → criterion checks → evidence → verdict
 ```
 
-Runner credentials are workspace-bound and stored only as hashes. A claimed runner job receives a fresh opaque lease token; only its hash is stored. Completion consumes the lease, so replay is rejected. Capabilities are fixed at registration and protocol compatibility is constrained to `0.1.x`.
+The Runner has:
 
-## Production isolation
+- **no database credential** — it cannot read or write PostgreSQL directly;
+- **no inbound listening port** — nothing can connect to it; it only polls outward;
+- **outbound-only connectivity** — it registers with the API, claims jobs by lease, and returns evidence;
+- **a workspace-bound identity** — its credential is scoped to one workspace and stored only as a hash;
+- **fixed capabilities** — set at registration and negotiated with the protocol version.
 
-Production Linux execution requires Bubblewrap and fails closed when it is unavailable. The runner:
+## Production execution
 
-- executes as a dedicated non-root user;
-- copies the controlled repository into an ephemeral workspace;
-- rejects symlinks escaping the source root;
-- clears inherited environment and adds only an explicit allowlist;
-- applies CPU/address-space/process/open-file limits with `prlimit`;
-- uses Bubblewrap user/mount/PID/IPC/UTS/cgroup namespaces;
-- exposes system runtime paths read-only and only the ephemeral workspace read-write;
-- disables network by default; checks explicitly opt in to network;
-- never mounts the host Docker socket and never requests privileged mode;
-- deletes the ephemeral workspace after success, failure or timeout.
+Production Linux execution requires Bubblewrap and **fails closed** when it is unavailable. The runner:
 
-Development escape hatches (`MADEPROOF_RUNNER_ALLOW_ROOT`, `MADEPROOF_RUNNER_ALLOW_WEAK_SANDBOX`, `MADEPROOF_CHROMIUM_NO_SANDBOX`) are not valid production configurations.
+1. executes as a dedicated non-root user;
+2. copies the controlled repository into an ephemeral workspace;
+3. rejects symlinks escaping the source root;
+4. clears inherited environment and applies an explicit allowlist;
+5. applies CPU, address-space, process and open-file limits with `prlimit`;
+6. uses Bubblewrap user, mount, PID, IPC, UTS and (where available) cgroup namespaces;
+7. disables network by default — criteria must explicitly opt in;
+8. never mounts the host Docker socket and never requests privileged mode;
+9. deletes the ephemeral workspace after success, failure, timeout or crash.
 
-## Durable recovery
+If strong isolation is unavailable, production execution is **refused** — it is never silently downgraded to a weaker sandbox.
 
-`verification_jobs` and `runner_jobs` are PostgreSQL-backed in production. Claims have expirations and attempts. A new worker can reclaim stale verification work after a crash. Expired runner leases are requeued until `max_attempts`, then become `TIMED_OUT`. Cancellation cancels pending runner jobs and moves the task/run out of active verification states.
+## Environment policy
 
-## Local runner
+The Runner inherits **no** environment variables from its parent process. The environment is empty except for an explicit allowlist, which is configurable and deliberately conservative.
 
-Register a runner with `POST /api/v1/runners`, copy the one-time `mpr_...` secret, then run:
+Development escape hatches that weaken isolation are recognized but are **not valid production configurations**:
+
+- `MADEPROOF_RUNNER_ALLOW_ROOT`
+- `MADEPROOF_RUNNER_ALLOW_WEAK_SANDBOX`
+- `MADEPROOF_CHROMIUM_NO_SANDBOX`
+
+In production these are ignored; attempting to use them logs a warning and the request fails closed.
+
+## Leases and job lifecycle
+
+```text
+register → lease issued (single-use, non-replayable, hashed at rest)
+   → claim job → execute criterion in sandbox
+   → return evidence → lease consumed → result recorded
+   → lease expires (if unused) → job requeued or TIMED_OUT after max_attempts
+```
+
+- A lease token is single-use; replay is rejected.
+- Credentials are workspace-bound.
+- Capabilities are fixed at registration.
+- Protocol version is validated: a runner that reports an incompatible version cannot register or receive jobs.
+- Expired leases are requeued until `max_attempts`, then the job becomes `TIMED_OUT`.
+- Cancellation cancels pending runner jobs and moves the task/run out of active verification states.
+
+## Local development runner
+
+For local development the runner can be started with the API:
 
 ```bash
 export NODE_ENV=production
-export MADEPROOF_BASE_URL=https://madeproof.example.com
+export MADEPROOF_BASE_URL=http://127.0.0.1:3210
 export MADEPROOF_RUNNER_CREDENTIAL='mpr_...'
 export MADEPROOF_RUNNER_ROOTS=/srv/repos/project
 npm run runner
 ```
 
 No inbound runner port is required.
+
+## What the runner must never do
+
+- never run as root in production;
+- never mount the Docker socket;
+- never request privileged containers;
+- never expose host filesystem beyond the required read-only runtime pieces;
+- never inherit ambient secrets;
+- never enable network for executable checks unless the contract explicitly allows it;
+- never claim a job outside its workspace;
+- never report an incompatible protocol version as compatible.
+
+## Registration
+
+Register a runner with `POST /api/v1/runners`. The response contains a one-time `mpr_...` secret. Store it only as a hash; use it once to obtain a lease.

@@ -37,7 +37,7 @@ try {
   await api(runtime.url, auth, 'POST', `/runs/${run1.body.id}/evidence`, { type: 'TEXT', value: { claim: 'Done. Everything works.' }, source: 'execution-agent' });
   const queuedFailed = await api<any>(runtime.url, auth, 'POST', `/runs/${run1.body.id}/verify`, {}, { 'Idempotency-Key': 'e2e-verify-failed' });
   assert.equal(queuedFailed.status, 202);
-  assert.equal(queuedFailed.body.status, 'QUEUED');
+  assert.equal(queuedFailed.body.job.status, 'QUEUED');
   const failed = await waitForVerification(runtime.url, auth, run1.body.id);
   assert.equal(failed.verdict.machine_verdict, 'FAILED', JSON.stringify(failed, null, 2));
   assert.equal(failed.results.filter((item: any) => item.status === 'PASSED').length, 5, JSON.stringify(failed.results, null, 2));

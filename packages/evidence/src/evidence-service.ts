@@ -24,7 +24,12 @@ export class EvidenceService {
   }): EvidenceItem {
     const serialized = canonicalJson(input.value);
     const sizeBytes = Buffer.byteLength(serialized);
-    if (sizeBytes > MAX_INLINE_BYTES) throw new MadeProofError('EVIDENCE_TOO_LARGE', 'Inline evidence exceeds 512 KiB; upload it as a file artifact', 413);
+    if (sizeBytes > MAX_INLINE_BYTES)
+      throw new MadeProofError(
+        'EVIDENCE_TOO_LARGE',
+        'Inline evidence exceeds 512 KiB; upload it as a file artifact',
+        413,
+      );
     const id = newId('evd');
     return {
       id,
@@ -43,7 +48,7 @@ export class EvidenceService {
       provenance: input.provenance,
       trustTier: this.trustTier(input.provenance),
       sanitizationState: 'SAFE',
-      value: input.value
+      value: input.value,
     };
   }
 
@@ -59,13 +64,16 @@ export class EvidenceService {
     provenance: EvidenceItem['provenance'];
     mimeType: string;
   }): EvidenceItem {
-    if (input.bytes.byteLength > 25 * 1024 * 1024) throw new MadeProofError('EVIDENCE_TOO_LARGE', 'Evidence file exceeds the 25 MiB limit', 413);
-    if (!/^[a-z0-9]{1,8}$/i.test(input.extension)) throw new MadeProofError('INVALID_FILE_EXTENSION', 'Evidence file extension is invalid', 422);
+    if (input.bytes.byteLength > 25 * 1024 * 1024)
+      throw new MadeProofError('EVIDENCE_TOO_LARGE', 'Evidence file exceeds the 25 MiB limit', 413);
+    if (!/^[a-z0-9]{1,8}$/i.test(input.extension))
+      throw new MadeProofError('INVALID_FILE_EXTENSION', 'Evidence file extension is invalid', 422);
     const id = newId('evd');
     const dir = path.resolve(this.dataDir, 'evidence', input.runId);
     fs.mkdirSync(dir, { recursive: true });
     const target = path.resolve(dir, `${id}.${input.extension.toLowerCase()}`);
-    if (!target.startsWith(`${dir}${path.sep}`)) throw new MadeProofError('PATH_TRAVERSAL', 'Evidence path escaped its storage boundary', 400);
+    if (!target.startsWith(`${dir}${path.sep}`))
+      throw new MadeProofError('PATH_TRAVERSAL', 'Evidence path escaped its storage boundary', 400);
     fs.writeFileSync(target, input.bytes, { mode: 0o600 });
     return {
       id,
@@ -83,7 +91,7 @@ export class EvidenceService {
       storageLocation: target,
       provenance: input.provenance,
       trustTier: this.trustTier(input.provenance),
-      sanitizationState: 'SAFE'
+      sanitizationState: 'SAFE',
     };
   }
 
@@ -93,7 +101,7 @@ export class EvidenceService {
       IMPORTED: 2,
       EXTERNAL_SIGNED: 3,
       OBSERVED: 4,
-      EXECUTED_BY_MADEPROOF: 5
+      EXECUTED_BY_MADEPROOF: 5,
     }[provenance];
   }
 }

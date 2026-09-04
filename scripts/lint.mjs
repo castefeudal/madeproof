@@ -5,8 +5,11 @@ const roots = ['apps', 'packages', 'tests', 'scripts'];
 const forbidden = [
   { pattern: /console\.log\(process\.env/g, message: 'Never log process.env' },
   { pattern: /\b(?:describe|it|test)\.(?:skip|todo)\b/g, message: 'No skipped critical tests' },
-  { pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g, message: 'Private key detected' },
-  { pattern: /AKIA[0-9A-Z]{16}/g, message: 'Possible AWS key detected' }
+  {
+    pattern: /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/g,
+    message: 'Private key detected',
+  },
+  { pattern: /AKIA[0-9A-Z]{16}/g, message: 'Possible AWS key detected' },
 ];
 const files = [];
 function walk(dir) {

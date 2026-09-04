@@ -14,4 +14,4 @@ COPY --from=build --chown=node:node /src/node_modules ./node_modules
 COPY --from=build --chown=node:node /src/dist ./dist
 COPY --from=build --chown=node:node /src/examples/demo-target ./examples/demo-target
 USER node
-ENTRYPOINT ["node","dist/apps/runner/src/main.js"]
+ENTRYPOINT ["node","dist/apps/runner/src/agent-main.js"]

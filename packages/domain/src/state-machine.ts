@@ -10,7 +10,7 @@ const taskTransitions: Record<TaskStatus, TaskStatus[]> = {
   VERIFIED: ['IN_PROGRESS'],
   REVIEW_REQUIRED: ['IN_PROGRESS', 'CANCELLED'],
   FAILED: ['IN_PROGRESS', 'CANCELLED'],
-  CANCELLED: []
+  CANCELLED: [],
 };
 
 const runTransitions: Record<RunStatus, RunStatus[]> = {
@@ -22,17 +22,27 @@ const runTransitions: Record<RunStatus, RunStatus[]> = {
   COMPLETED: [],
   FAILED: [],
   CANCELLED: [],
-  TIMED_OUT: []
+  TIMED_OUT: [],
 };
 
 export function assertTaskTransition(from: TaskStatus, to: TaskStatus): void {
   if (!taskTransitions[from].includes(to)) {
-    throw new MadeProofError('INVALID_TASK_TRANSITION', `Task cannot transition from ${from} to ${to}`, 409, { from, to });
+    throw new MadeProofError(
+      'INVALID_TASK_TRANSITION',
+      `Task cannot transition from ${from} to ${to}`,
+      409,
+      { from, to },
+    );
   }
 }
 
 export function assertRunTransition(from: RunStatus, to: RunStatus): void {
   if (!runTransitions[from].includes(to)) {
-    throw new MadeProofError('INVALID_RUN_TRANSITION', `Run cannot transition from ${from} to ${to}`, 409, { from, to });
+    throw new MadeProofError(
+      'INVALID_RUN_TRANSITION',
+      `Run cannot transition from ${from} to ${to}`,
+      409,
+      { from, to },
+    );
   }
 }

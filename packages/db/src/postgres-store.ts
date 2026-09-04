@@ -1,6 +1,386 @@
-import{PostgresStoreDomain}from'./postgres-domain-store.js';import type{MadeProofStore,RunnerJobInput,RunnerRegistrationInput,VerificationJobInput,VerificationJobStatus}from'./store.js';import{newId}from'../../shared/src/ids.js';import{MadeProofError}from'../../shared/src/errors.js';
-function json<T>(v:unknown,f:T):T{if(v==null)return f;if(typeof v==='string')return JSON.parse(v)as T;return v as T}
-export class PostgresStore extends PostgresStoreDomain implements MadeProofStore{
-async registerRunner(i:RunnerRegistrationInput){const r=(await this.workspaceQuery(i.workspaceId,'INSERT INTO runner_registrations(id,workspace_id,name,credential_hash,version,capabilities_json) VALUES($1,$2,$3,$4,$5,$6::jsonb) RETURNING id,workspace_id,name,version,capabilities_json,last_heartbeat_at,revoked_at,created_at',[newId('rnr'),i.workspaceId,i.name,i.credentialHash,i.version,JSON.stringify(i.capabilities)])).rows[0];return{...r,capabilities:json<string[]>(r.capabilities_json,[])}}async listRunners(w:string){return(await this.workspaceQuery(w,'SELECT id,workspace_id,name,version,capabilities_json,last_heartbeat_at,revoked_at,created_at FROM runner_registrations WHERE workspace_id=$1 ORDER BY created_at DESC',[w])).rows.map((r:any)=>({...r,capabilities:json<string[]>(r.capabilities_json,[])}))}async getRunnerByCredentialHash(h:string){const r=(await this.query('SELECT * FROM runner_registrations WHERE credential_hash=$1 AND revoked_at IS NULL',[h])).rows[0];return r?{...r,capabilities:json<string[]>(r.capabilities_json,[])}:null}async revokeRunner(w:string,id:string){const c=await(await this.getPool()).connect();try{await c.query('BEGIN');const r=await c.query('UPDATE runner_registrations SET revoked_at=now() WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL',[id,w]);await c.query("UPDATE runner_jobs SET status='CANCELLED',updated_at=now(),lease_token_hash=NULL,lease_expires_at=NULL WHERE runner_id=$1 AND workspace_id=$2 AND status IN ('LEASED','RUNNING')",[id,w]);await c.query('COMMIT');return r.rowCount===1}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}async heartbeatRunner(w:string,id:string,v:string,caps:string[]){const r=await this.query('UPDATE runner_registrations SET last_heartbeat_at=now(),version=$1,capabilities_json=$2::jsonb WHERE id=$3 AND workspace_id=$4 AND revoked_at IS NULL',[v,JSON.stringify(caps),id,w]);if(r.rowCount!==1)throw new MadeProofError('RUNNER_REVOKED','Runner credential is revoked or invalid',401)}
-async enqueueVerificationJob(i:VerificationJobInput){return(await this.query("INSERT INTO verification_jobs(id,workspace_id,run_id,actor_id,status,attempt,max_attempts,available_at,request_key) VALUES($1,$2,$3,$4,'QUEUED',0,$5,now(),$6) ON CONFLICT(run_id) DO UPDATE SET updated_at=verification_jobs.updated_at RETURNING *",[newId('vjob'),i.workspaceId,i.runId,i.actorId,i.maxAttempts??5,i.requestKey??null])).rows[0]}async getVerificationJob(w:string,r:string){return(await this.query('SELECT * FROM verification_jobs WHERE workspace_id=$1 AND run_id=$2',[w,r])).rows[0]??null}async claimVerificationJob(workerId:string,leaseSeconds:number){const c=await(await this.getPool()).connect();try{await c.query('BEGIN');const r=(await c.query("SELECT * FROM verification_jobs WHERE ((status='QUEUED' AND available_at<=now()) OR (status IN ('CLAIMED','RUNNING','WAITING_RUNNER') AND claim_expires_at IS NOT NULL AND claim_expires_at<now())) AND attempt<max_attempts ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1")).rows[0];if(!r){await c.query('COMMIT');return null}const u=(await c.query("UPDATE verification_jobs SET status='CLAIMED',claimed_by=$1,claim_expires_at=now()+($2::text||' seconds')::interval,last_heartbeat_at=now(),attempt=attempt+1,updated_at=now() WHERE id=$3 RETURNING *",[workerId,leaseSeconds,r.id])).rows[0];await c.query('COMMIT');return u}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}async heartbeatVerificationJob(id:string,w:string,s:number,status:VerificationJobStatus='RUNNING'){return(await this.query("UPDATE verification_jobs SET status=$1,claim_expires_at=now()+($2::text||' seconds')::interval,last_heartbeat_at=now(),updated_at=now() WHERE id=$3 AND claimed_by=$4 AND status NOT IN ('COMPLETED','FAILED','CANCELLED')",[status,s,id,w])).rowCount===1}async completeVerificationJob(id:string,w:string){const r=await this.query("UPDATE verification_jobs SET status='COMPLETED',claim_expires_at=NULL,last_heartbeat_at=now(),updated_at=now() WHERE id=$1 AND claimed_by=$2",[id,w]);if(r.rowCount!==1)throw new MadeProofError('JOB_LEASE_LOST','Verification job lease is no longer owned by this worker',409)}async failVerificationJob(id:string,w:string,i:any){const r=(await this.query('SELECT attempt,max_attempts FROM verification_jobs WHERE id=$1 AND claimed_by=$2',[id,w])).rows[0];if(!r)throw new MadeProofError('JOB_LEASE_LOST','Verification job lease is no longer owned by this worker',409);const retry=i.retryable&&Number(r.attempt)<Number(r.max_attempts),b=i.backoffSeconds??Math.min(60,2**Number(r.attempt));await this.query("UPDATE verification_jobs SET status=$1,available_at=now()+($2::text||' seconds')::interval,claimed_by=NULL,claim_expires_at=NULL,error_code=$3,error_message=$4,updated_at=now() WHERE id=$5",[retry?'QUEUED':'FAILED',b,i.code,i.message.slice(0,2000),id])}async cancelVerificationJob(w:string,r:string){const c=await(await this.getPool()).connect();try{await c.query('BEGIN');const j=(await c.query("UPDATE verification_jobs SET status='CANCELLED',claim_expires_at=NULL,updated_at=now() WHERE workspace_id=$1 AND run_id=$2 AND status NOT IN ('COMPLETED','FAILED','CANCELLED') RETURNING id",[w,r])).rows[0];if(j)await c.query("UPDATE runner_jobs SET status='CANCELLED',lease_token_hash=NULL,lease_expires_at=NULL,updated_at=now() WHERE verification_job_id=$1 AND status NOT IN ('COMPLETED','FAILED','CANCELLED','TIMED_OUT')",[j.id]);await c.query('COMMIT');return Boolean(j)}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}
-async createOrGetRunnerJob(i:RunnerJobInput){const r=(await this.query("INSERT INTO runner_jobs(id,workspace_id,verification_job_id,run_id,check_id,criterion_id,type,required_capability,payload_json,status,attempt,max_attempts,available_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'QUEUED',0,$10,now()) ON CONFLICT(verification_job_id,criterion_id) DO UPDATE SET updated_at=runner_jobs.updated_at RETURNING *",[newId('rjob'),i.workspaceId,i.verificationJobId,i.runId,i.checkId,i.criterionId,i.type,i.requiredCapability??null,JSON.stringify(i.payload),i.maxAttempts??3])).rows[0];return{...r,payload:json(r.payload_json,{}),result:json(r.result_json,null),error:json(r.error_json,null)}}async getRunnerJob(id:string){const r=(await this.query('SELECT * FROM runner_jobs WHERE id=$1',[id])).rows[0];return r?{...r,payload:json(r.payload_json,{}),result:json(r.result_json,null),error:json(r.error_json,null)}:null}async getRunnerJobForCriterion(v:string,c:string){const r=(await this.query('SELECT * FROM runner_jobs WHERE verification_job_id=$1 AND criterion_id=$2',[v,c])).rows[0];return r?{...r,payload:json(r.payload_json,{}),result:json(r.result_json,null),error:json(r.error_json,null)}:null}async claimRunnerJob(i:any){await this.recoverExpiredRunnerJobs();const c=await(await this.getPool()).connect();try{await c.query('BEGIN');const rows=(await c.query("SELECT * FROM runner_jobs WHERE workspace_id=$1 AND status='QUEUED' AND available_at<=now() AND attempt<max_attempts ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 25",[i.workspaceId])).rows,caps=new Set(i.capabilities),r=rows.find((x:any)=>!x.required_capability||caps.has(x.required_capability));if(!r){await c.query('COMMIT');return null}const u=(await c.query("UPDATE runner_jobs SET status='LEASED',runner_id=$1,lease_token_hash=$2,lease_expires_at=now()+($3::text||' seconds')::interval,attempt=attempt+1,updated_at=now() WHERE id=$4 AND status='QUEUED' RETURNING *",[i.runnerId,i.leaseTokenHash,i.leaseSeconds,r.id])).rows[0];await c.query('COMMIT');return u?{...u,payload:json(u.payload_json,{})}:null}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}async markRunnerJobRunning(i:any){const r=await this.query("UPDATE runner_jobs SET status='RUNNING',lease_expires_at=now()+($1::text||' seconds')::interval,updated_at=now() WHERE id=$2 AND workspace_id=$3 AND runner_id=$4 AND lease_token_hash=$5 AND status='LEASED' AND lease_expires_at>now() RETURNING *",[i.leaseSeconds,i.jobId,i.workspaceId,i.runnerId,i.leaseTokenHash]);if(!r.rowCount)throw new MadeProofError('RUNNER_JOB_TOKEN_INVALID','Runner job lease is invalid, expired or already consumed',409);return{...r.rows[0],payload:json(r.rows[0].payload_json,{})}}async completeRunnerJob(i:any){const r=await this.query("UPDATE runner_jobs SET status='COMPLETED',result_json=$1::jsonb,error_json=NULL,lease_token_hash=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$2 AND workspace_id=$3 AND runner_id=$4 AND lease_token_hash=$5 AND status IN ('LEASED','RUNNING') AND lease_expires_at>now() RETURNING *",[JSON.stringify(i.result),i.jobId,i.workspaceId,i.runnerId,i.leaseTokenHash]);if(!r.rowCount)throw new MadeProofError('RUNNER_JOB_TOKEN_INVALID','Runner job lease is invalid, expired or already consumed',409);return{...r.rows[0],result:json(r.rows[0].result_json,{})}}async failRunnerJob(i:any){const r=(await this.query("SELECT attempt,max_attempts FROM runner_jobs WHERE id=$1 AND workspace_id=$2 AND runner_id=$3 AND lease_token_hash=$4 AND status IN ('LEASED','RUNNING') AND lease_expires_at>now()",[i.jobId,i.workspaceId,i.runnerId,i.leaseTokenHash])).rows[0];if(!r)throw new MadeProofError('RUNNER_JOB_TOKEN_INVALID','Runner job lease is invalid, expired or already consumed',409);const retry=i.retryable&&Number(r.attempt)<Number(r.max_attempts),b=i.backoffSeconds??Math.min(60,2**Number(r.attempt)),u=(await this.query("UPDATE runner_jobs SET status=$1,available_at=now()+($2::text||' seconds')::interval,runner_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL,error_json=$3::jsonb,updated_at=now() WHERE id=$4 RETURNING *",[retry?'QUEUED':'FAILED',b,JSON.stringify(i.error),i.jobId])).rows[0];return{...u,error:json(u.error_json,{})}}async recoverExpiredRunnerJobs(){return Number((await this.query("UPDATE runner_jobs SET status=CASE WHEN attempt<max_attempts THEN 'QUEUED' ELSE 'TIMED_OUT' END,runner_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL,available_at=now(),updated_at=now() WHERE status IN ('LEASED','RUNNING') AND lease_expires_at IS NOT NULL AND lease_expires_at<now()")).rowCount??0)}async cancelRunnerJobsForVerification(id:string){return Number((await this.query("UPDATE runner_jobs SET status='CANCELLED',lease_token_hash=NULL,lease_expires_at=NULL,updated_at=now() WHERE verification_job_id=$1 AND status NOT IN ('COMPLETED','FAILED','CANCELLED','TIMED_OUT')",[id])).rowCount??0)}async createUserForTest(i:any){const c=await(await this.getPool()).connect();try{await c.query('BEGIN');await c.query('INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)',[i.id,i.email,i.passwordHash]);await c.query('INSERT INTO workspaces(id,name) VALUES($1,$2)',[i.workspaceId,i.workspaceName]);await c.query('INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,$3)',[i.workspaceId,i.id,'OWNER']);await c.query('COMMIT')}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}async expireAllSessionsForTest(){await this.query("UPDATE sessions SET expires_at='2000-01-01T00:00:00Z'")}}
+import { PostgresStoreDomain } from './postgres-domain-store.js';
+import type {
+  MadeProofStore,
+  RunnerJobInput,
+  RunnerRegistrationInput,
+  VerificationJobInput,
+  VerificationJobStatus,
+} from './store.js';
+import { newId } from '../../shared/src/ids.js';
+import { MadeProofError } from '../../shared/src/errors.js';
+function json<T>(v: unknown, f: T): T {
+  if (v == null) return f;
+  if (typeof v === 'string') return JSON.parse(v) as T;
+  return v as T;
+}
+export class PostgresStore extends PostgresStoreDomain implements MadeProofStore {
+  async registerRunner(i: RunnerRegistrationInput) {
+    const r = (
+      await this.workspaceQuery(
+        i.workspaceId,
+        'INSERT INTO runner_registrations(id,workspace_id,name,credential_hash,version,capabilities_json) VALUES($1,$2,$3,$4,$5,$6::jsonb) RETURNING id,workspace_id,name,version,capabilities_json,last_heartbeat_at,revoked_at,created_at',
+        [
+          newId('rnr'),
+          i.workspaceId,
+          i.name,
+          i.credentialHash,
+          i.version,
+          JSON.stringify(i.capabilities),
+        ],
+      )
+    ).rows[0];
+    return { ...r, capabilities: json<string[]>(r.capabilities_json, []) };
+  }
+  async listRunners(w: string) {
+    return (
+      await this.workspaceQuery(
+        w,
+        'SELECT id,workspace_id,name,version,capabilities_json,last_heartbeat_at,revoked_at,created_at FROM runner_registrations WHERE workspace_id=$1 ORDER BY created_at DESC',
+        [w],
+      )
+    ).rows.map((r: any) => ({ ...r, capabilities: json<string[]>(r.capabilities_json, []) }));
+  }
+  async getRunnerByCredentialHash(h: string) {
+    const r = (
+      await this.query(
+        'SELECT * FROM runner_registrations WHERE credential_hash=$1 AND revoked_at IS NULL',
+        [h],
+      )
+    ).rows[0];
+    return r ? { ...r, capabilities: json<string[]>(r.capabilities_json, []) } : null;
+  }
+  async revokeRunner(w: string, id: string) {
+    const c = await (await this.getPool()).connect();
+    try {
+      await c.query('BEGIN');
+      const r = await c.query(
+        'UPDATE runner_registrations SET revoked_at=now() WHERE id=$1 AND workspace_id=$2 AND revoked_at IS NULL',
+        [id, w],
+      );
+      await c.query(
+        "UPDATE runner_jobs SET status='CANCELLED',updated_at=now(),lease_token_hash=NULL,lease_expires_at=NULL WHERE runner_id=$1 AND workspace_id=$2 AND status IN ('LEASED','RUNNING')",
+        [id, w],
+      );
+      await c.query('COMMIT');
+      return r.rowCount === 1;
+    } catch (e) {
+      await c.query('ROLLBACK');
+      throw e;
+    } finally {
+      c.release();
+    }
+  }
+  async heartbeatRunner(w: string, id: string, v: string, caps: string[]) {
+    const r = await this.query(
+      'UPDATE runner_registrations SET last_heartbeat_at=now(),version=$1,capabilities_json=$2::jsonb WHERE id=$3 AND workspace_id=$4 AND revoked_at IS NULL',
+      [v, JSON.stringify(caps), id, w],
+    );
+    if (r.rowCount !== 1)
+      throw new MadeProofError('RUNNER_REVOKED', 'Runner credential is revoked or invalid', 401);
+  }
+  async enqueueVerificationJob(i: VerificationJobInput) {
+    return (
+      await this.query(
+        "INSERT INTO verification_jobs(id,workspace_id,run_id,actor_id,status,attempt,max_attempts,available_at,request_key) VALUES($1,$2,$3,$4,'QUEUED',0,$5,now(),$6) ON CONFLICT(run_id) DO UPDATE SET updated_at=verification_jobs.updated_at RETURNING *",
+        [
+          newId('vjob'),
+          i.workspaceId,
+          i.runId,
+          i.actorId,
+          i.maxAttempts ?? 5,
+          i.requestKey ?? null,
+        ],
+      )
+    ).rows[0];
+  }
+  async getVerificationJob(w: string, r: string) {
+    return (
+      (
+        await this.query('SELECT * FROM verification_jobs WHERE workspace_id=$1 AND run_id=$2', [
+          w,
+          r,
+        ])
+      ).rows[0] ?? null
+    );
+  }
+  async claimVerificationJob(workerId: string, leaseSeconds: number) {
+    const c = await (await this.getPool()).connect();
+    try {
+      await c.query('BEGIN');
+      const r = (
+        await c.query(
+          "SELECT * FROM verification_jobs WHERE ((status='QUEUED' AND available_at<=now()) OR (status IN ('CLAIMED','RUNNING','WAITING_RUNNER') AND claim_expires_at IS NOT NULL AND claim_expires_at<now())) AND attempt<max_attempts ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1",
+        )
+      ).rows[0];
+      if (!r) {
+        await c.query('COMMIT');
+        return null;
+      }
+      const u = (
+        await c.query(
+          "UPDATE verification_jobs SET status='CLAIMED',claimed_by=$1,claim_expires_at=now()+($2::text||' seconds')::interval,last_heartbeat_at=now(),attempt=attempt+1,updated_at=now() WHERE id=$3 RETURNING *",
+          [workerId, leaseSeconds, r.id],
+        )
+      ).rows[0];
+      await c.query('COMMIT');
+      return u;
+    } catch (e) {
+      await c.query('ROLLBACK');
+      throw e;
+    } finally {
+      c.release();
+    }
+  }
+  async heartbeatVerificationJob(
+    id: string,
+    w: string,
+    s: number,
+    status: VerificationJobStatus = 'RUNNING',
+  ) {
+    return (
+      (
+        await this.query(
+          "UPDATE verification_jobs SET status=$1,claim_expires_at=now()+($2::text||' seconds')::interval,last_heartbeat_at=now(),updated_at=now() WHERE id=$3 AND claimed_by=$4 AND status NOT IN ('COMPLETED','FAILED','CANCELLED')",
+          [status, s, id, w],
+        )
+      ).rowCount === 1
+    );
+  }
+  async completeVerificationJob(id: string, w: string) {
+    const r = await this.query(
+      "UPDATE verification_jobs SET status='COMPLETED',claim_expires_at=NULL,last_heartbeat_at=now(),updated_at=now() WHERE id=$1 AND claimed_by=$2",
+      [id, w],
+    );
+    if (r.rowCount !== 1)
+      throw new MadeProofError(
+        'JOB_LEASE_LOST',
+        'Verification job lease is no longer owned by this worker',
+        409,
+      );
+  }
+  async failVerificationJob(id: string, w: string, i: any) {
+    const r = (
+      await this.query(
+        'SELECT attempt,max_attempts FROM verification_jobs WHERE id=$1 AND claimed_by=$2',
+        [id, w],
+      )
+    ).rows[0];
+    if (!r)
+      throw new MadeProofError(
+        'JOB_LEASE_LOST',
+        'Verification job lease is no longer owned by this worker',
+        409,
+      );
+    const retry = i.retryable && Number(r.attempt) < Number(r.max_attempts),
+      b = i.backoffSeconds ?? Math.min(60, 2 ** Number(r.attempt));
+    await this.query(
+      "UPDATE verification_jobs SET status=$1,available_at=now()+($2::text||' seconds')::interval,claimed_by=NULL,claim_expires_at=NULL,error_code=$3,error_message=$4,updated_at=now() WHERE id=$5",
+      [retry ? 'QUEUED' : 'FAILED', b, i.code, i.message.slice(0, 2000), id],
+    );
+  }
+  async cancelVerificationJob(w: string, r: string) {
+    const c = await (await this.getPool()).connect();
+    try {
+      await c.query('BEGIN');
+      const j = (
+        await c.query(
+          "UPDATE verification_jobs SET status='CANCELLED',claim_expires_at=NULL,updated_at=now() WHERE workspace_id=$1 AND run_id=$2 AND status NOT IN ('COMPLETED','FAILED','CANCELLED') RETURNING id",
+          [w, r],
+        )
+      ).rows[0];
+      if (j)
+        await c.query(
+          "UPDATE runner_jobs SET status='CANCELLED',lease_token_hash=NULL,lease_expires_at=NULL,updated_at=now() WHERE verification_job_id=$1 AND status NOT IN ('COMPLETED','FAILED','CANCELLED','TIMED_OUT')",
+          [j.id],
+        );
+      await c.query('COMMIT');
+      return Boolean(j);
+    } catch (e) {
+      await c.query('ROLLBACK');
+      throw e;
+    } finally {
+      c.release();
+    }
+  }
+  async createOrGetRunnerJob(i: RunnerJobInput) {
+    const r = (
+      await this.query(
+        "INSERT INTO runner_jobs(id,workspace_id,verification_job_id,run_id,check_id,criterion_id,type,required_capability,payload_json,status,attempt,max_attempts,available_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,'QUEUED',0,$10,now()) ON CONFLICT(verification_job_id,criterion_id) DO UPDATE SET updated_at=runner_jobs.updated_at RETURNING *",
+        [
+          newId('rjob'),
+          i.workspaceId,
+          i.verificationJobId,
+          i.runId,
+          i.checkId,
+          i.criterionId,
+          i.type,
+          i.requiredCapability ?? null,
+          JSON.stringify(i.payload),
+          i.maxAttempts ?? 3,
+        ],
+      )
+    ).rows[0];
+    return {
+      ...r,
+      payload: json(r.payload_json, {}),
+      result: json(r.result_json, null),
+      error: json(r.error_json, null),
+    };
+  }
+  async getRunnerJob(id: string) {
+    const r = (await this.query('SELECT * FROM runner_jobs WHERE id=$1', [id])).rows[0];
+    return r
+      ? {
+          ...r,
+          payload: json(r.payload_json, {}),
+          result: json(r.result_json, null),
+          error: json(r.error_json, null),
+        }
+      : null;
+  }
+  async getRunnerJobForCriterion(v: string, c: string) {
+    const r = (
+      await this.query(
+        'SELECT * FROM runner_jobs WHERE verification_job_id=$1 AND criterion_id=$2',
+        [v, c],
+      )
+    ).rows[0];
+    return r
+      ? {
+          ...r,
+          payload: json(r.payload_json, {}),
+          result: json(r.result_json, null),
+          error: json(r.error_json, null),
+        }
+      : null;
+  }
+  async claimRunnerJob(i: any) {
+    await this.recoverExpiredRunnerJobs();
+    const c = await (await this.getPool()).connect();
+    try {
+      await c.query('BEGIN');
+      const rows = (
+          await c.query(
+            "SELECT * FROM runner_jobs WHERE workspace_id=$1 AND status='QUEUED' AND available_at<=now() AND attempt<max_attempts ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 25",
+            [i.workspaceId],
+          )
+        ).rows,
+        caps = new Set(i.capabilities),
+        r = rows.find((x: any) => !x.required_capability || caps.has(x.required_capability));
+      if (!r) {
+        await c.query('COMMIT');
+        return null;
+      }
+      const u = (
+        await c.query(
+          "UPDATE runner_jobs SET status='LEASED',runner_id=$1,lease_token_hash=$2,lease_expires_at=now()+($3::text||' seconds')::interval,attempt=attempt+1,updated_at=now() WHERE id=$4 AND status='QUEUED' RETURNING *",
+          [i.runnerId, i.leaseTokenHash, i.leaseSeconds, r.id],
+        )
+      ).rows[0];
+      await c.query('COMMIT');
+      return u ? { ...u, payload: json(u.payload_json, {}) } : null;
+    } catch (e) {
+      await c.query('ROLLBACK');
+      throw e;
+    } finally {
+      c.release();
+    }
+  }
+  async markRunnerJobRunning(i: any) {
+    const r = await this.query(
+      "UPDATE runner_jobs SET status='RUNNING',lease_expires_at=now()+($1::text||' seconds')::interval,updated_at=now() WHERE id=$2 AND workspace_id=$3 AND runner_id=$4 AND lease_token_hash=$5 AND status='LEASED' AND lease_expires_at>now() RETURNING *",
+      [i.leaseSeconds, i.jobId, i.workspaceId, i.runnerId, i.leaseTokenHash],
+    );
+    if (!r.rowCount)
+      throw new MadeProofError(
+        'RUNNER_JOB_TOKEN_INVALID',
+        'Runner job lease is invalid, expired or already consumed',
+        409,
+      );
+    return { ...r.rows[0], payload: json(r.rows[0].payload_json, {}) };
+  }
+  async completeRunnerJob(i: any) {
+    const r = await this.query(
+      "UPDATE runner_jobs SET status='COMPLETED',result_json=$1::jsonb,error_json=NULL,lease_token_hash=NULL,lease_expires_at=NULL,updated_at=now() WHERE id=$2 AND workspace_id=$3 AND runner_id=$4 AND lease_token_hash=$5 AND status IN ('LEASED','RUNNING') AND lease_expires_at>now() RETURNING *",
+      [JSON.stringify(i.result), i.jobId, i.workspaceId, i.runnerId, i.leaseTokenHash],
+    );
+    if (!r.rowCount)
+      throw new MadeProofError(
+        'RUNNER_JOB_TOKEN_INVALID',
+        'Runner job lease is invalid, expired or already consumed',
+        409,
+      );
+    return { ...r.rows[0], result: json(r.rows[0].result_json, {}) };
+  }
+  async failRunnerJob(i: any) {
+    const r = (
+      await this.query(
+        "SELECT attempt,max_attempts FROM runner_jobs WHERE id=$1 AND workspace_id=$2 AND runner_id=$3 AND lease_token_hash=$4 AND status IN ('LEASED','RUNNING') AND lease_expires_at>now()",
+        [i.jobId, i.workspaceId, i.runnerId, i.leaseTokenHash],
+      )
+    ).rows[0];
+    if (!r)
+      throw new MadeProofError(
+        'RUNNER_JOB_TOKEN_INVALID',
+        'Runner job lease is invalid, expired or already consumed',
+        409,
+      );
+    const retry = i.retryable && Number(r.attempt) < Number(r.max_attempts),
+      b = i.backoffSeconds ?? Math.min(60, 2 ** Number(r.attempt)),
+      u = (
+        await this.query(
+          "UPDATE runner_jobs SET status=$1,available_at=now()+($2::text||' seconds')::interval,runner_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL,error_json=$3::jsonb,updated_at=now() WHERE id=$4 RETURNING *",
+          [retry ? 'QUEUED' : 'FAILED', b, JSON.stringify(i.error), i.jobId],
+        )
+      ).rows[0];
+    return { ...u, error: json(u.error_json, {}) };
+  }
+  async recoverExpiredRunnerJobs() {
+    return Number(
+      (
+        await this.query(
+          "UPDATE runner_jobs SET status=CASE WHEN attempt<max_attempts THEN 'QUEUED' ELSE 'TIMED_OUT' END,runner_id=NULL,lease_token_hash=NULL,lease_expires_at=NULL,available_at=now(),updated_at=now() WHERE status IN ('LEASED','RUNNING') AND lease_expires_at IS NOT NULL AND lease_expires_at<now()",
+        )
+      ).rowCount ?? 0,
+    );
+  }
+  async cancelRunnerJobsForVerification(id: string) {
+    return Number(
+      (
+        await this.query(
+          "UPDATE runner_jobs SET status='CANCELLED',lease_token_hash=NULL,lease_expires_at=NULL,updated_at=now() WHERE verification_job_id=$1 AND status NOT IN ('COMPLETED','FAILED','CANCELLED','TIMED_OUT')",
+          [id],
+        )
+      ).rowCount ?? 0,
+    );
+  }
+  async createUserForTest(i: any) {
+    const c = await (await this.getPool()).connect();
+    try {
+      await c.query('BEGIN');
+      await c.query('INSERT INTO users(id,email,password_hash) VALUES($1,$2,$3)', [
+        i.id,
+        i.email,
+        i.passwordHash,
+      ]);
+      await c.query('INSERT INTO workspaces(id,name) VALUES($1,$2)', [
+        i.workspaceId,
+        i.workspaceName,
+      ]);
+      await c.query('INSERT INTO workspace_members(workspace_id,user_id,role) VALUES($1,$2,$3)', [
+        i.workspaceId,
+        i.id,
+        'OWNER',
+      ]);
+      await c.query('COMMIT');
+    } catch (e) {
+      await c.query('ROLLBACK');
+      throw e;
+    } finally {
+      c.release();
+    }
+  }
+  async expireAllSessionsForTest() {
+    await this.query("UPDATE sessions SET expires_at='2000-01-01T00:00:00Z'");
+  }
+}
