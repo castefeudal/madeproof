@@ -274,7 +274,7 @@ export class SafeCommandRunner {
             isolation.push('network-unavailable-host-net');
           }
         }
-        command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=512', '--nofile=1024');
+        command.push('prlimit', '--as=8589934592', '--cpu=120', '--nproc=512', '--nofile=1024');
         command.push(...inner);
       } else {
         isolation = [
@@ -286,7 +286,7 @@ export class SafeCommandRunner {
         ];
         command = [];
         if (process.platform === 'linux') {
-          command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=512', '--nofile=1024');
+          command.push('prlimit', '--as=8589934592', '--cpu=120', '--nproc=512', '--nofile=1024');
           if (useNetworkNamespace) {
             if (supportsNamespaces().net) {
               command.push('unshare', '--user', '--map-root-user', '--net');
