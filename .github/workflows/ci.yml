@@ -42,6 +42,14 @@ jobs:
           node-version: 24.20.0
           cache: npm
       - run: npm install --ignore-scripts
+      - name: Configure unprivileged user namespaces for Bubblewrap
+        run: |
+          sudo sysctl -w kernel.unprivileged_userns_clone=1 || true
+          if sysctl kernel.apparmor_restrict_unprivileged_userns >/dev/null 2>&1; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+      - name: Install Bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
       - run: npm run lint
       - run: npm run format:check
       - run: npm run typecheck

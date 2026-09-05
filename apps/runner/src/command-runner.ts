@@ -237,11 +237,16 @@ export class SafeCommandRunner {
         bwrapArgs.push('--bind', tempRoot, tempRoot);
         for (const [key, value] of Object.entries(env)) bwrapArgs.push('--setenv', key, value);
         command = [bwrap, ...bwrapArgs];
+        // bwrap's own --unshare-net fails on kernels/sandboxes (e.g. gVisor)
+        // that don't implement the netlink RTM_NEWADDR call bwrap uses to
+        // bring up loopback. Create the network namespace with unshare(1)
+        // instead and run bwrap inside it; the guarantee is identical: the
+        // command runs in a new, empty network namespace.
         if (useNetworkNamespace) {
-          bwrapArgs.push('--unshare-net');
+          command = ['unshare', '--user', '--map-root-user', '--net', ...command];
           isolation.push('network-namespace');
         }
-        command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=256', '--nofile=1024');
+        command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=512', '--nofile=1024');
         command.push(...inner);
       } else {
         isolation = [
@@ -253,7 +258,7 @@ export class SafeCommandRunner {
         ];
         command = [];
         if (process.platform === 'linux') {
-          command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=256', '--nofile=1024');
+          command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=512', '--nofile=1024');
           if (useNetworkNamespace) {
             command.push('unshare', '--user', '--map-root-user', '--net');
             isolation.push('network-namespace');
