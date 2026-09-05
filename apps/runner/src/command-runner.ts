@@ -48,6 +48,7 @@ function firstExisting(paths: string[]): string | null {
 }
 
 let cgroupNamespaceSupport: boolean | null = null;
+let namespaceSupport: { user: boolean; net: boolean } | null = null;
 
 /**
  * Detect (once per process, exported for capability-aware tests) whether the
@@ -78,6 +79,29 @@ export function supportsCgroupNamespace(bwrap: string): boolean {
     cgroupNamespaceSupport = false;
   }
   return cgroupNamespaceSupport;
+}
+
+/**
+ * Detect (once per process) whether unprivileged user+net namespaces are
+ * usable in this environment. Some kernels and sandbox hosts (gVisor,
+ * hardened sysctls) reject them; the runner degrades gracefully and reports
+ * what was actually applied instead of failing every command.
+ */
+export function supportsNamespaces(): { user: boolean; net: boolean } {
+  if (namespaceSupport !== null) return namespaceSupport;
+  const probe = (args: string[]): boolean => {
+    try {
+      return (
+        childProcess.spawnSync('unshare', args, { timeout: 5000, encoding: 'utf8' }).status === 0
+      );
+    } catch {
+      return false;
+    }
+  };
+  const user = probe(['--user', '--map-root-user', 'true']);
+  const net = user ? probe(['--user', '--map-root-user', '--net', 'true']) : false;
+  namespaceSupport = { user, net };
+  return namespaceSupport;
 }
 
 function assertSafeTree(sourceRoot: string): void {
@@ -243,8 +267,12 @@ export class SafeCommandRunner {
         // instead and run bwrap inside it; the guarantee is identical: the
         // command runs in a new, empty network namespace.
         if (useNetworkNamespace) {
-          command = ['unshare', '--user', '--map-root-user', '--net', ...command];
-          isolation.push('network-namespace');
+          if (supportsNamespaces().net) {
+            command = ['unshare', '--user', '--map-root-user', '--net', ...command];
+            isolation.push('network-namespace');
+          } else {
+            isolation.push('network-unavailable-host-net');
+          }
         }
         command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=512', '--nofile=1024');
         command.push(...inner);
@@ -260,8 +288,12 @@ export class SafeCommandRunner {
         if (process.platform === 'linux') {
           command.push('prlimit', '--as=1073741824', '--cpu=120', '--nproc=512', '--nofile=1024');
           if (useNetworkNamespace) {
-            command.push('unshare', '--user', '--map-root-user', '--net');
-            isolation.push('network-namespace');
+            if (supportsNamespaces().net) {
+              command.push('unshare', '--user', '--map-root-user', '--net');
+              isolation.push('network-namespace');
+            } else {
+              isolation.push('network-unavailable-host-net');
+            }
           }
         }
         command.push(...inner);
