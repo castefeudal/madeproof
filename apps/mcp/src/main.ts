@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import readline from 'node:readline';
 import { MadeProof } from '../../../packages/sdk/src/client.js';
 import { clientBackend, handleMcpMessage } from './protocol.js';

@@ -2,9 +2,111 @@
 
 **Do not trust completion claims. Verify the work.**
 
-MADEPROOF is an evidence-first verification layer for delegated AI work. It exists because AI agents, developers, contractors and automated systems can *say* that work is finished — but only independent verification can establish whether the claimed result actually satisfies the contract.
+[![CI](https://github.com/castefeudal/madeproof/actions/workflows/ci.yml/badge.svg)](https://github.com/castefeudal/madeproof/actions/workflows/ci.yml)
+[![Release](https://github.com/castefeudal/madeproof/actions/workflows/release.yml/badge.svg)](https://github.com/castefeudal/madeproof/actions/workflows/release.yml)
+[![npm version](https://img.shields.io/npm/v/madeproof.svg)](https://www.npmjs.com/package/madeproof)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.16-blue)](https://nodejs.org)
 
-A verification platform that simply believed the claim it received would defeat its own purpose. MADEPROOF is therefore built so that the verifying components never run the code under test, never share its database credentials, and never accept evidence at face value.
+Evidence-first verification layer for delegated AI work. AI agents, developers,
+contractors and automated systems can *say* that work is finished — but only
+independent verification can establish whether the claimed result actually
+satisfies the contract.
+
+A verification platform that simply believed the claim it received would defeat
+its own purpose. MADEPROOF is therefore built so that the verifying components
+**never run the code under test**, **never share its database credentials**, and
+**never accept evidence at face value**.
+
+## Why MADEPROOF
+
+> «Агент сказал, что сделал» ≠ «сделано».
+
+Every AI agent, contractor and automated pipeline eventually claims completion.
+MADEPROOF answers one question: **can the claim be independently proven?**
+
+- **CLAIM** ≠ **EVIDENCE** ≠ **CHECK** ≠ **RESULT** ≠ **VERDICT** — five things
+  that are never conflated.
+- `VERIFIED` is emitted **only** when every mandatory criterion actually passed
+  under independent execution. There is no timeout, crash, or config path that
+  turns "we could not verify" into "verified".
+- Every verification ends in an **immutable, hash-chained receipt** that cannot
+  be rewritten.
+
+## Quick start
+
+Run the stack (from source, or `npm install -g madeproof` and use the bins):
+
+```bash
+# 1. Install (SQLite local mode works with zero external services)
+npm install
+cp .env.example .env
+npm run build
+
+# 2. Run API + Web on http://127.0.0.1:3210 (plus worker for verification)
+npm run start        # API + Web
+npm run worker       # in a second terminal
+
+# 3. Log in and verify work via the CLI
+madeproof login --base-url http://127.0.0.1:3210 --api-key <owner-or-agent-key>
+madeproof project create --name "my-app"
+madeproof task create --project <projectId> --title "Add login" --intent "Implement email+password auth"
+madeproof contract generate --task <taskId>
+madeproof run start --task <taskId>
+madeproof verify --run <runId>     # queues durable verification
+madeproof status --run <runId>     # poll until VERIFIED / FAILED / ERROR
+madeproof receipt --run <runId>    # immutable proof
+```
+
+CLI full reference: run `madeproof --help`. Machine-readable output: `--json`.
+
+Or run the full production stack (PostgreSQL + Worker + Bubblewrap-isolated Runner):
+
+```bash
+docker compose -f infra/docker/compose.yml up -d --build
+curl http://127.0.0.1:3210/health/ready
+```
+
+## Connect your AI agent (MCP)
+
+```json
+{
+  "mcpServers": {
+    "madeproof": {
+      "command": "madeproof",
+      "args": ["mcp"],
+      "env": { "MADEPROOF_API_KEY": "<your-key>", "MADEPROOF_BASE_URL": "http://127.0.0.1:3210" }
+    }
+  }
+}
+```
+
+Works with Claude Desktop, Claude Code, Cursor, VS Code Copilot, Hermes and any
+MCP-compatible host. 15 tools cover the full verification lifecycle:
+`create_project`, `create_task`, `generate_contract`, `start_run`, `add_evidence`,
+`verify`, `get_verdict`, `get_receipt`, `get_agent_reliability`, and more.
+
+## How it works
+
+```text
+Agent claims "done"
+        │  POST /api/v1/runs/:id/verify
+        ▼
+┌─────────────────────────────┐   durable queue (PostgreSQL, 202 = queued)
+│  API / Web (control plane)  │   never executes target code
+└──────────────┬──────────────┘
+               │ claims job (FOR UPDATE SKIP LOCKED, lease)
+       ┌───────▼────────┐
+       │     Worker     │   coordinates verification, scales horizontally
+       └───────┬────────┘
+               │ creates runner job
+       ┌───────▼────────┐
+       │     Runner     │   outbound-only, no DB credential, no inbound port
+       └───────┬────────┘
+               │ executes criteria in Bubblewrap sandbox
+               ▼
+   isolated workspace → evidence → verdict → immutable receipt
+```
 
 ## What MADEPROOF does
 
@@ -77,7 +179,7 @@ Independent verification is only meaningful if it is honest about failure. MADEP
 - **Runner** — the only component that executes target-project commands. Runs as a dedicated non-root user with no inbound port and no database credential. Local development escape hatches (`MADEPROOF_RUNNER_ALLOW_ROOT`, `MADEPROOF_RUNNER_ALLOW_WEAK_SANDBOX`) are not valid production configurations.
 - **MCP / CLI / SDK** — clients of the same control plane. They cannot bypass tenancy or runner authorization.
 
-## Quick start
+## Running from source
 
 ### Requirements
 
@@ -183,8 +285,8 @@ See [docs/SECURITY.md](docs/SECURITY.md) and [docs/THREAT_MODEL.md](docs/THREAT_
 | API | `http://127.0.0.1:3210/api/v1` | REST, OpenAPI at `/api/v1/openapi.json`. |
 | Health | `/health/live`, `/health/ready` | Liveness and readiness. |
 | CLI | `npx madeproof --help` | Local runs, status, receipts, JSON output. |
-| MCP | `madeproof mcp` | MCP server for AI agents. |
-| SDK | `import { MadeProofClient } from '@madeproof/sdk'` | Typed client, polling helper. |
+| MCP | `npx madeproof mcp` | MCP server for AI agents (stdio). |
+| SDK | `import { MadeProof } from 'madeproof'` | Typed client (namespaces: projects/tasks/runs/verification/receipts). |
 
 ## Development
 
@@ -208,6 +310,26 @@ npm run verify             # lint + typecheck + all tests
 
 See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for production deployment, including the Docker topology, health checks, migrations, and rollback procedure.
 
+## Documentation
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — системная архитектура и инварианты
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — прод-деплой (Docker, health checks, rollback)
+- [docs/SECURITY.md](docs/SECURITY.md) + [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) — модель угроз
+- [docs/RUNNER.md](docs/RUNNER.md) — runner, песочница, изоляция
+- [docs/OPERATIONS.md](docs/OPERATIONS.md) — эксплуатация
+- [docs/QUICKSTART.md](docs/QUICKSTART.md) — быстрый старт (RU)
+
+## Contributing
+
+Вклад приветствуется — код, документация, баг-репорты, идеи.
+См. [CONTRIBUTING.md](CONTRIBUTING.md) и [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
+Сообщать об уязвимостях — приватно, см. [SECURITY.md](SECURITY.md).
+
+## Changelog
+
+История изменений — в [CHANGELOG.md](CHANGELOG.md).
+
 ## License
 
-MIT
+MIT — [LICENSE](LICENSE). Свободно для личного и коммерческого использования.

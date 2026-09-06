@@ -1,17 +1,61 @@
 {
   "name": "madeproof",
   "version": "0.1.0",
-  "private": true,
-  "description": "Evidence-first verification layer for delegated AI work.",
-  "type": "module",
+  "description": "Evidence-first verification layer for delegated AI work. Do not trust completion claims — verify the work.",
+  "keywords": [
+    "ai-agents",
+    "verification",
+    "evidence",
+    "mcp",
+    "model-context-protocol",
+    "sandbox",
+    "bubblewrap",
+    "agent-evaluation",
+    "llm",
+    "verifiable-ai"
+  ],
+  "license": "MIT",
+  "author": "Pavel Markov (castefeudal)",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/castefeudal/madeproof.git"
+  },
+  "homepage": "https://github.com/castefeudal/madeproof#readme",
+  "bugs": {
+    "url": "https://github.com/castefeudal/madeproof/issues"
+  },
   "engines": {
     "node": ">=22.16.0"
   },
+  "type": "module",
   "workspaces": [
     "apps/*",
     "packages/*",
     "examples/*"
   ],
+  "files": [
+    "dist/apps",
+    "dist/packages",
+    "dist/types",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "bin": {
+    "madeproof": "dist/apps/cli/src/main.js",
+    "madeproof-mcp": "dist/apps/mcp/src/main.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/packages/sdk/src/client.d.ts",
+      "import": "./dist/packages/sdk/src/client.js"
+    },
+    "./mcp": {
+      "types": "./dist/apps/mcp/src/protocol.d.ts",
+      "import": "./dist/apps/mcp/src/protocol.js"
+    },
+    "./package.json": "./package.json"
+  },
   "scripts": {
     "clean": "rm -rf dist .madeproof-data",
     "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
