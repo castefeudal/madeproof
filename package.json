@@ -18,7 +18,7 @@
   "author": "Pavel Markov (castefeudal)",
   "repository": {
     "type": "git",
-    "url": "https://github.com/castefeudal/madeproof.git"
+    "url": "git+https://github.com/castefeudal/madeproof.git"
   },
   "homepage": "https://github.com/castefeudal/madeproof#readme",
   "bugs": {
